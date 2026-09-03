@@ -70,7 +70,6 @@ Use this checklist to verify that all code, documentation, assets, deployment ta
 
 ### 8. Cloudflare Deployment
 - [x] **Project**: `stagedops-darkatek7-20260903`
-- [x] **Public Custom Domain**: `https://stagedops.darkatek7.com`
-- [x] **Canonical Pages URL**: `https://stagedops-darkatek7-20260903.pages.dev`
+- [x] **Public Live URL**: `https://stagedops-darkatek7-20260903.pages.dev`
 - [x] **Headers Configured**: `Origin-Agent-Cluster: ?1`, `Permissions-Policy: tools=(self)`
 - [x] **Origin Trial Mechanism**: Build-time injection via `WEBMCP_ORIGIN_TRIAL_TOKEN` documented and ready.

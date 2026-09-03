@@ -10,15 +10,10 @@ StagedOps is a static, zero-backend React single-page application hosted on Clou
 
 ### Project Details
 - **Project Name**: `stagedops-darkatek7-20260903`
-- **Custom Domain**: `https://stagedops.darkatek7.com`
-- **Canonical Pages URL**: `https://stagedops-darkatek7-20260903.pages.dev`
+- **Application URL**: `https://stagedops-darkatek7-20260903.pages.dev`
 - **Build Output Directory**: `dist`
 - **Static Assets Directory**: `public`
-- **DNS Record (Cloudflare Zone `darkatek7.com`)**:
-  - **Type**: `CNAME`
-  - **Name**: `stagedops`
-  - **Target**: `stagedops-darkatek7-20260903.pages.dev`
-  - **Proxy**: Proxied (Orange cloud)
+- **Optional Custom Domain**: `https://stagedops.darkatek7.com` (CNAME to `stagedops-darkatek7-20260903.pages.dev`)
 
 ### Deployment Steps (Direct Upload)
 

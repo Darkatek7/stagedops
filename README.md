@@ -104,13 +104,10 @@ pnpm build
 
 ---
 
----
+## Cloudflare Pages Deployment
 
-## Cloudflare Pages Deployment & Custom Domain
-
-StagedOps is deployed to Cloudflare Pages with custom domain support:
-- **Live Custom Domain**: [https://stagedops.darkatek7.com](https://stagedops.darkatek7.com)
-- **Canonical Pages Deployment**: [https://stagedops-darkatek7-20260903.pages.dev](https://stagedops-darkatek7-20260903.pages.dev)
+StagedOps is deployed to Cloudflare Pages:
+- **Live Application**: [https://stagedops-darkatek7-20260903.pages.dev](https://stagedops-darkatek7-20260903.pages.dev)
 - **Project**: `stagedops-darkatek7-20260903`
 
 ### Security & Capability Headers

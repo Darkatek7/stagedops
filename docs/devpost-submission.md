@@ -84,7 +84,7 @@ StagedOps introduces an architecture for safe agentic operation in mission-criti
 
 ## 7. Links & Resources
 
-- **Public Live Application**: [https://stagedops.darkatek7.com](https://stagedops.darkatek7.com) (Canonical Pages: [https://stagedops-darkatek7-20260903.pages.dev](https://stagedops-darkatek7-20260903.pages.dev))
+- **Public Live Application**: [https://stagedops-darkatek7-20260903.pages.dev](https://stagedops-darkatek7-20260903.pages.dev)
 - **GitHub Repository**: [https://github.com/Darkatek7/stagedops](https://github.com/Darkatek7/stagedops)
 - **Key Implementation File**: [`src/webmcp/registerTools.ts`](https://github.com/Darkatek7/stagedops/blob/main/src/webmcp/registerTools.ts)
 - **Demo Script**: [`docs/demo-script.md`](https://github.com/Darkatek7/stagedops/blob/main/docs/demo-script.md)
