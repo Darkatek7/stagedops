@@ -162,30 +162,62 @@ function freeze<T>(value: T): T {
 function clone<T>(value: T): T { return structuredClone(value) }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null && !Array.isArray(value) }
+function isPositiveInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 }
+function isNonNegativeFiniteNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0 }
+function hasExactValues(values: readonly string[], expected: readonly string[]): boolean { return values.length === expected.length && values.every((value, index) => value === expected[index]) }
+function expectedPolicyName(id: string): string | undefined {
+  if (id === 'pol-standard-update-window') return 'Standard update window'
+  if (id === 'pol-rapid-update-enforcement') return 'Rapid update enforcement'
+  return undefined
+}
 function isPolicy(value: unknown): value is Policy {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string' && Array.isArray(value.targetDeviceIds) && value.targetDeviceIds.every((id) => typeof id === 'string')
-    && isRecord(value.updates) && typeof value.updates.restartDeadlineDays === 'number'
+  if (!isRecord(value) || typeof value.id !== 'string' || value.name !== expectedPolicyName(value.id) || !Array.isArray(value.targetDeviceIds)
+    || !value.targetDeviceIds.every((id) => typeof id === 'string') || !hasExactValues(value.targetDeviceIds, conflictDeviceIds) || !isRecord(value.updates)) return false
+  return isPositiveInteger(value.updates.restartDeadlineDays) && value.updates.restartDeadlineDays <= 30
 }
 function isStagedChange(value: unknown): value is StagedChange {
-  return isRecord(value) && typeof value.id === 'string' && typeof value.policyId === 'string' && typeof value.restartDeadlineDays === 'number'
-    && Number.isInteger(value.baseConfigRevision) && typeof value.createdAt === 'number'
+  return isRecord(value) && typeof value.id === 'string' && /^change-\d{6}$/.test(value.id) && typeof value.policyId === 'string'
+    && expectedPolicyName(value.policyId) !== undefined && isPositiveInteger(value.restartDeadlineDays) && value.restartDeadlineDays <= 30
+    && isPositiveInteger(value.baseConfigRevision) && isNonNegativeFiniteNumber(value.createdAt)
 }
 function isAuditEvent(value: unknown): value is AuditEvent {
-  return isRecord(value) && typeof value.id === 'string' && ['stage', 'authorize', 'apply', 'rollback', 'reset'].includes(String(value.action))
-    && (value.actor === 'Human' || value.actor === 'Agent') && typeof value.at === 'number' && Number.isInteger(value.stateRevision)
-    && Number.isInteger(value.configRevision) && typeof value.detail === 'string'
+  return isRecord(value) && typeof value.id === 'string' && /^audit-\d{6}$/.test(value.id) && ['stage', 'authorize', 'apply', 'rollback', 'reset'].includes(String(value.action))
+    && (value.actor === 'Human' || value.actor === 'Agent') && isNonNegativeFiniteNumber(value.at) && isPositiveInteger(value.stateRevision)
+    && isPositiveInteger(value.configRevision) && typeof value.detail === 'string' && value.detail.length > 0
 }
 function isRollbackPoint(value: unknown): value is RollbackPoint {
-  return isRecord(value) && Array.isArray(value.policies) && value.policies.every(isPolicy) && typeof value.appliedChangeId === 'string'
+  return isRecord(value) && Array.isArray(value.policies) && value.policies.length === 2 && value.policies.every(isPolicy) && typeof value.appliedChangeId === 'string' && /^change-\d{6}$/.test(value.appliedChangeId)
 }
 
 function validState(value: unknown): value is PersistentState {
   if (!isRecord(value)) return false
   const state = value as Record<string, unknown>
-  return Number.isInteger(state.stateRevision) && Number.isInteger(state.configRevision) && Number.isInteger(state.sequence)
-    && Array.isArray(state.policies) && state.policies.length === 2 && state.policies.every(isPolicy)
-    && Array.isArray(state.audit) && state.audit.every(isAuditEvent) && (state.stagedChange === null || isStagedChange(state.stagedChange))
-    && (state.rollbackPoint === null || isRollbackPoint(state.rollbackPoint))
+  const { stateRevision, configRevision: persistedConfigRevision, sequence, policies, audit, stagedChange, rollbackPoint } = state
+  if (!isPositiveInteger(stateRevision) || !isPositiveInteger(persistedConfigRevision) || typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 0
+    || stateRevision !== sequence + 1 || !Array.isArray(policies) || policies.length !== 2 || !policies.every(isPolicy)
+    || !hasExactValues(policies.map((policy) => policy.id), ['pol-standard-update-window', 'pol-rapid-update-enforcement'])
+    || !Array.isArray(audit) || audit.length !== sequence || !audit.every(isAuditEvent)
+    || (stagedChange !== null && !isStagedChange(stagedChange)) || (rollbackPoint !== null && !isRollbackPoint(rollbackPoint))) return false
+
+  let configRevision = 1
+  let previousAt = 0
+  for (const [index, event] of audit.entries()) {
+    const sequence = index + 1
+    if (event.id !== `audit-${String(sequence).padStart(6, '0')}` || event.stateRevision !== sequence + 1 || event.at < previousAt) return false
+    const changesConfiguration = event.action === 'apply' || event.action === 'rollback' || event.action === 'reset'
+    configRevision += changesConfiguration ? 1 : 0
+    if (event.configRevision !== configRevision) return false
+    previousAt = event.at
+  }
+  if (persistedConfigRevision !== configRevision) return false
+
+  if (stagedChange) {
+    const stageSequence = Number(stagedChange.id.slice('change-'.length))
+    const stageEvent = audit[stageSequence - 1]
+    if (stagedChange.baseConfigRevision !== persistedConfigRevision || !stageEvent || stageEvent.action !== 'stage' || stageEvent.detail !== `Staged ${stagedChange.policyId}`) return false
+  }
+  if (rollbackPoint && !audit.some((event) => event.action === 'apply' && event.detail === `Applied ${rollbackPoint.appliedChangeId}`)) return false
+  return true
 }
 
 function hydrate(storage: StorageAdapter | undefined): PersistentState {
@@ -232,16 +264,37 @@ export function createStagedOpsStore(options: StoreOptions = {}): StagedOpsStore
   const now = options.now ?? Date.now
   let state = hydrate(storage)
   let authorization: Authorization | null = null
+  let authorizationExpiryTimer: ReturnType<typeof setTimeout> | null = null
   let snapshot = makeSnapshot()
   const listeners = new Set<() => void>()
   const simulationCache = new Map<string, Simulation>()
 
   function authorizationStatus(): AuthorizationStatus | null {
     if (!authorization || authorization.used) return null
-    return freeze({ id: authorization.id, stagedChangeId: authorization.stagedChangeId, expiresAt: authorization.expiresAt, valid: now() <= authorization.expiresAt && state.stagedChange?.id === authorization.stagedChangeId && state.configRevision === authorization.configRevision })
+    return freeze({ id: authorization.id, stagedChangeId: authorization.stagedChangeId, expiresAt: authorization.expiresAt, valid: now() < authorization.expiresAt && state.stagedChange?.id === authorization.stagedChangeId && state.configRevision === authorization.configRevision })
   }
   function makeSnapshot(): StoreSnapshot { return freeze({ ...state, authorization: authorizationStatus() }) }
   function publish() { snapshot = makeSnapshot(); listeners.forEach((listener) => listener()) }
+  function clearAuthorizationExpiry() {
+    if (authorizationExpiryTimer !== null) clearTimeout(authorizationExpiryTimer)
+    authorizationExpiryTimer = null
+  }
+  function setAuthorization(next: Authorization | null) {
+    clearAuthorizationExpiry()
+    authorization = next
+    if (next && !next.used) {
+      const authorizationId = next.id
+      authorizationExpiryTimer = setTimeout(() => {
+        authorizationExpiryTimer = null
+        if (authorization?.id === authorizationId && !authorization.used && now() >= authorization.expiresAt) publish()
+      }, Math.max(0, next.expiresAt - now()))
+    }
+    publish()
+  }
+  function invalidateAuthorization() {
+    clearAuthorizationExpiry()
+    publish()
+  }
   function persist(next: PersistentState): CommandResult<null> {
     try { storage?.setItem(STORAGE_KEY, JSON.stringify({ version: ENVELOPE_VERSION, state: next })) } catch { return error('PERSISTENCE_FAILED', 'The change could not be saved locally.') }
     state = freeze(next)
@@ -260,11 +313,11 @@ export function createStagedOpsStore(options: StoreOptions = {}): StagedOpsStore
     getSnapshot: () => snapshot,
     subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener) },
   }
-  Object.assign(store, { __internal: { now, transition, getState: () => state, getAuthorization: () => authorization, setAuthorization: (next: Authorization | null) => { authorization = next; publish() }, simulationCache } })
+  Object.assign(store, { __internal: { now, transition, getState: () => state, getAuthorization: () => authorization, setAuthorization, invalidateAuthorization, simulationCache } })
   return store
 }
 
-type InternalStore = StagedOpsStore & { __internal: { now: () => number; transition: (change: Omit<AuditEvent, 'id' | 'at' | 'stateRevision' | 'configRevision'>, mutate: (previous: PersistentState) => Omit<PersistentState, 'stateRevision' | 'audit' | 'sequence'>) => CommandResult<PersistentState>; getState: () => PersistentState; getAuthorization: () => Authorization | null; setAuthorization: (next: Authorization | null) => void; simulationCache: Map<string, Simulation> } }
+type InternalStore = StagedOpsStore & { __internal: { now: () => number; transition: (change: Omit<AuditEvent, 'id' | 'at' | 'stateRevision' | 'configRevision'>, mutate: (previous: PersistentState) => Omit<PersistentState, 'stateRevision' | 'audit' | 'sequence'>) => CommandResult<PersistentState>; getState: () => PersistentState; getAuthorization: () => Authorization | null; setAuthorization: (next: Authorization | null) => void; invalidateAuthorization: () => void; simulationCache: Map<string, Simulation> } }
 function internal(store: StagedOpsStore): InternalStore { return store as InternalStore }
 
 export function getFleetSummary(store: StagedOpsStore): FleetSummary { return summaryFor(internal(store).__internal.getState().policies) }
@@ -313,6 +366,7 @@ export function stagePolicyChange(store: StagedOpsStore, input: { policyId: stri
   const staged = freeze({ id, ...input, baseConfigRevision: current.configRevision, createdAt: engine.now() })
   const result = engine.transition({ action: 'stage', actor: 'Human', detail: `Staged ${input.policyId}` }, (previous) => ({ ...previous, stagedChange: staged, rollbackPoint: previous.rollbackPoint }))
   if (!result.ok) return result
+  engine.invalidateAuthorization()
   return { ok: true, data: staged }
 }
 
@@ -335,7 +389,7 @@ export function applyStagedChange(store: StagedOpsStore, input: { actor: Actor; 
   if (!staged) return error('NO_STAGED_CHANGE', 'There is no staged change to apply.')
   const authorization = engine.getAuthorization()
   if (!authorization || !input.authorizationId) return error('AUTHORIZATION_REQUIRED', 'A visible human authorization is required before applying.')
-  if (engine.now() > authorization.expiresAt) return error('AUTHORIZATION_EXPIRED', 'The authorization has expired.')
+  if (engine.now() >= authorization.expiresAt) return error('AUTHORIZATION_EXPIRED', 'The authorization has expired.')
   if (authorization.used || authorization.id !== input.authorizationId || authorization.stagedChangeId !== staged.id || authorization.configRevision !== state.configRevision) return error('AUTHORIZATION_MISMATCH', 'Authorization does not match the active change and revision.')
   const policies = changedPolicies(state, staged.policyId, staged.restartDeadlineDays)
   const result = engine.transition({ action: 'apply', actor: input.actor, detail: `Applied ${staged.id}` }, (previous) => ({ ...previous, policies, configRevision: previous.configRevision + 1, stagedChange: null, rollbackPoint: freeze({ policies: previous.policies, appliedChangeId: staged.id }) }))

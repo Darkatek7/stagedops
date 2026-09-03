@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   STORAGE_KEY,
   applyStagedChange,
@@ -22,6 +22,14 @@ class MemoryStorage implements StorageAdapter {
 }
 
 const rapidUpdate = { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7 }
+
+function persistedStage() {
+  const storage = new MemoryStorage()
+  const store = createStagedOpsStore({ storage })
+  const staged = stagePolicyChange(store, rapidUpdate)
+  if (!staged.ok) throw new Error('stage should succeed')
+  return JSON.parse(storage.getItem(STORAGE_KEY)!) as { version: number; state: Record<string, unknown> }
+}
 
 describe('StagedOps deterministic domain engine', () => {
   it('seeds exactly 60 devices with 48 compliant and 12 conflicting', () => {
@@ -134,6 +142,59 @@ describe('StagedOps deterministic domain engine', () => {
 
     expect(getFleetSummary(store).totalDevices).toBe(60)
     expect(() => JSON.parse(storage.getItem(STORAGE_KEY)!)).not.toThrow()
+  })
+
+  it.each([
+    ['required policy identity and targets', (envelope: { state: Record<string, unknown> }) => {
+      const policies = envelope.state.policies as Record<string, unknown>[]
+      policies[0] = { ...policies[0], id: 'pol-unrecognized', targetDeviceIds: ['dev-999'] }
+    }],
+    ['non-negative, consistent revisions and sequence', (envelope: { state: Record<string, unknown> }) => {
+      envelope.state.stateRevision = -1
+      envelope.state.sequence = 99
+    }],
+    ['well-formed, ordered audit events', (envelope: { state: Record<string, unknown> }) => {
+      const audit = envelope.state.audit as Record<string, unknown>[]
+      audit[0] = { ...audit[0], id: 'not-an-audit-id', stateRevision: 999, at: -1 }
+    }],
+    ['a stage bound to the current configuration revision', (envelope: { state: Record<string, unknown> }) => {
+      const stagedChange = envelope.state.stagedChange as Record<string, unknown>
+      stagedChange.baseConfigRevision = 0
+    }],
+    ['rollback data that corresponds to an applied change', (envelope: { state: Record<string, unknown> }) => {
+      envelope.state.rollbackPoint = { appliedChangeId: 'change-999999', policies: envelope.state.policies }
+    }],
+  ])('resets a semantically corrupt envelope: %s', (_label, corrupt) => {
+    const storage = new MemoryStorage()
+    const envelope = persistedStage()
+    corrupt(envelope)
+    storage.setItem(STORAGE_KEY, JSON.stringify(envelope))
+
+    const store = createStagedOpsStore({ storage })
+
+    expect(store.getSnapshot()).toMatchObject({ stateRevision: 1, configRevision: 1, sequence: 0, stagedChange: null, rollbackPoint: null, audit: [] })
+  })
+
+  it('publishes a new invalid authorization snapshot exactly when authorization expires', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_000)
+    try {
+      const store = createStagedOpsStore({ storage: new MemoryStorage() })
+      const staged = stagePolicyChange(store, rapidUpdate)
+      if (!staged.ok) throw new Error('stage should succeed')
+      const authorized = authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+      if (!authorized.ok) throw new Error('authorization should succeed')
+      const snapshots: boolean[] = []
+      const unsubscribe = store.subscribe(() => snapshots.push(store.getSnapshot().authorization?.valid ?? false))
+
+      vi.advanceTimersByTime(300_000)
+
+      expect(store.getSnapshot().authorization).toMatchObject({ id: authorized.data.id, valid: false })
+      expect(snapshots).toEqual([false])
+      unsubscribe()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('does not publish a partial state when persistence fails', () => {
