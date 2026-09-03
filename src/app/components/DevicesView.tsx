@@ -60,10 +60,13 @@ export function DevicesView({ devices, policies, evaluation, selectedDeviceId, e
   const [sortDirection, setSortDirection] = useState<'ascending' | 'descending'>('ascending')
   const [appliedExternalFilters, setAppliedExternalFilters] = useState<Partial<DeviceFilters> | null>(externalFilters)
 
+  const [agentAttributed, setAgentAttributed] = useState(Boolean(externalFilters))
+
   if (externalFilters !== appliedExternalFilters) {
     setAppliedExternalFilters(externalFilters)
     setFilters(externalFilters ? { ...emptyDeviceFilters, ...externalFilters } : emptyDeviceFilters)
     setPage(0)
+    setAgentAttributed(Boolean(externalFilters))
   }
 
   const filtered = useMemo(() => {
@@ -89,11 +92,12 @@ export function DevicesView({ devices, policies, evaluation, selectedDeviceId, e
   const end = Math.min((currentPage + 1) * pageSize, filtered.length)
   const rapidDeadline = policies.find((policy) => policy.id === 'pol-rapid-update-enforcement')?.updates.restartDeadlineDays ?? 2
   const selected = devices.find((device) => device.id === selectedDeviceId) ?? null
-  const externalFilterVisible = externalFilters !== null && (filters.query.length > 0 || filters.departments.length > 0 || filters.rings.length > 0 || filters.statuses.length > 0)
+  const externalFilterVisible = agentAttributed && externalFilters !== null && (filters.query.length > 0 || filters.departments.length > 0 || filters.rings.length > 0 || filters.statuses.length > 0)
 
   const updateFilter = <K extends keyof DeviceFilters>(key: K, value: DeviceFilters[K]) => {
     setFilters((current) => ({ ...current, [key]: value }))
     setPage(0)
+    setAgentAttributed(false)
   }
 
   return (
@@ -112,7 +116,7 @@ export function DevicesView({ devices, policies, evaluation, selectedDeviceId, e
           <label><span>Department</span><select value={filters.departments.length === 1 ? filters.departments[0] : ''} onChange={(event) => updateFilter('departments', event.target.value ? [event.target.value as Department] : [])}><option value="">{filters.departments.length > 1 ? `${filters.departments.length} departments selected` : 'All departments'}</option>{departments.map((department) => <option key={department}>{department}</option>)}</select></label>
           <label><span>Deployment ring</span><select value={filters.rings.length === 1 ? filters.rings[0] : ''} onChange={(event) => updateFilter('rings', event.target.value ? [event.target.value as Ring] : [])}><option value="">{filters.rings.length > 1 ? `${filters.rings.length} rings selected` : 'All rings'}</option>{rings.map((ring) => <option key={ring}>{ring}</option>)}</select></label>
           <label><span>Status</span><select value={filters.statuses.length === 1 ? filters.statuses[0] : 'ALL'} onChange={(event) => updateFilter('statuses', event.target.value === 'ALL' ? [] : [event.target.value as Exclude<DeviceStatus, 'ALL'>])}><option value="ALL">{filters.statuses.length > 1 ? `${filters.statuses.length} statuses selected` : 'All statuses'}</option>{statuses.map((status) => <option key={status} value={status}>{statusLabel(status)}</option>)}</select></label>
-          <button className="button button-secondary clear-filters" type="button" onClick={() => { setFilters(emptyDeviceFilters); setPage(0) }}><X aria-hidden="true" />Clear filters</button>
+          <button className="button button-secondary clear-filters" type="button" onClick={() => { setFilters(emptyDeviceFilters); setPage(0); setAgentAttributed(false) }}><X aria-hidden="true" />Clear filters</button>
         </div>
       </section>
 

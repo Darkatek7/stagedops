@@ -109,8 +109,8 @@ export function createToolHandlers(options: HandlerOptions): ToolHandlers {
   const evaluation = () => getFleetEvaluation(store)
   const statusFor = (device: Device): DeviceStatus => {
     const current = evaluation()
-    if (current.osBlockers.some((item) => item.id === device.id)) return 'OS_VERSION_BLOCKED'
     if (current.conflictDeviceIds.includes(device.id)) return 'POLICY_CONFLICT'
+    if (current.osBlockers.some((item) => item.id === device.id)) return 'OS_VERSION_BLOCKED'
     return 'COMPLIANT'
   }
   const deviceSummary = (device: Device) => ({ ...device, status: statusFor(device) })
@@ -154,8 +154,7 @@ export function createToolHandlers(options: HandlerOptions): ToolHandlers {
       return (!filters.query || haystack.includes(filters.query))
         && (!filters.departments.length || filters.departments.includes(device.department))
         && (!filters.rings.length || filters.rings.includes(device.ring))
-        && (!filters.statuses.length || filters.statuses.includes(device.status)
-          || (filters.statuses.includes('POLICY_CONFLICT') && evaluation().conflictDeviceIds.includes(device.id)))
+        && (!filters.statuses.length || filters.statuses.includes(device.status))
     }).sort((left, right) => rank[left.status] - rank[right.status] || left.name.localeCompare(right.name))
     const data = { filters, totalMatches: matches.length, limit, offset, devices: matches.slice(offset, offset + limit) }
     return publish(success('find_devices', `Found ${matches.length} matching devices.`, data, matches.length ? callTool('inspect_device', 'Inspect a returned device for policy evidence.') : complete('Broaden the filters to find devices.')), { fleetFilters: { ...filters, limit, offset } })

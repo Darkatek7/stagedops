@@ -74,8 +74,33 @@ describe('WebMCP tool handlers', () => {
     } })
     if (result.ok) {
       expect(result.data.devices.map((device: { id: string }) => device.id)).toEqual(['dev-033', 'dev-034', 'dev-035'])
-      expect(result.data.devices[2]).toMatchObject({ status: 'OS_VERSION_BLOCKED' })
+      expect(result.data.devices[2]).toMatchObject({ status: 'POLICY_CONFLICT' })
     }
+  })
+
+  it('gives policy conflicts precedence over overlapping OS blockers at baseline', async () => {
+    const { handlers } = fixture()
+
+    expect(await handlers.inspect_device({ deviceId: 'dev-035' })).toMatchObject({ ok: true, data: {
+      status: 'POLICY_CONFLICT', effectiveValue: null, activeIssue: { code: 'POLICY_CONFLICT' },
+    } })
+    expect(await handlers.find_devices({ statuses: ['OS_VERSION_BLOCKED'], limit: 60 })).toMatchObject({ ok: true, data: {
+      totalMatches: 0, devices: [],
+    } })
+  })
+
+  it('reports the latent OS blocker after authorized apply resolves the policy conflict', async () => {
+    const f = await stage()
+    const authorization = authorizeStagedChange(f.store, { stagedChangeId: f.staged.data.stage.id })
+    if (!authorization.ok) throw new Error('authorization should succeed')
+    expect(await f.handlers.apply_staged_change({ stageId: f.staged.data.stage.id, expectedConfigRevision: 1 })).toMatchObject({ ok: true })
+
+    expect(await f.handlers.inspect_device({ deviceId: 'dev-035' })).toMatchObject({ ok: true, data: {
+      status: 'OS_VERSION_BLOCKED', effectiveValue: 7, activeIssue: { code: 'OS_VERSION_BLOCKED' },
+    } })
+    const result = await f.handlers.find_devices({ statuses: ['OS_VERSION_BLOCKED'], limit: 60 })
+    expect(result).toMatchObject({ ok: true, data: { totalMatches: 2 } })
+    if (result.ok) expect(result.data.devices.map((device: { id: string }) => device.id)).toEqual(['dev-035', 'dev-036'])
   })
 
   it('inspects a device with matching policies, evidence, active issue, and effective value', async () => {

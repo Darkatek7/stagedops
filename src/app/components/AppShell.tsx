@@ -20,7 +20,13 @@ const navigation = [
   { id: 'audit', label: 'Audit', icon: FileClock },
 ] as const
 
-const accessibleTheme = { '--teal-text': '#0e7490', '--control-font-size': '14px' } as CSSProperties
+const accessibleTheme = {
+  '--teal-text': '#0e7490',
+  '--control-font-size': '14px',
+  '--metadata-font-size': '14px',
+  '--touch-target-size': '44px',
+  '--focus-ring': '#2457d6',
+} as CSSProperties
 
 const viewTitles: Record<ViewName, { title: string; detail: string }> = {
   overview: { title: 'Operations overview', detail: 'Fleet health and the active policy decision.' },

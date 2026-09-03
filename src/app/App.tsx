@@ -85,10 +85,9 @@ export function App({ store, agentContext }: AppProps) {
       processedAgentResultRef.current = result
       const tool = agentToolName(result)
       if (!successfulAgentResult(result)) return
-      if (tool === 'find_devices') setView('devices')
-      if (tool === 'inspect_device') { setSelectedDeviceId(agent.selectedDeviceId); setView('devices') }
-      if (tool === 'explain_policy_conflicts') { setSelectedConflictDeviceIds(agent.selectedConflictDeviceIds); setView('policies') }
-      if (tool === 'simulate_policy_change') { setSimulation(approvedSimulation(store)); setView('policies') }
+      if (tool === 'inspect_device') setSelectedDeviceId(agent.selectedDeviceId)
+      if (tool === 'explain_policy_conflicts') setSelectedConflictDeviceIds(agent.selectedConflictDeviceIds)
+      if (tool === 'simulate_policy_change') setSimulation(approvedSimulation(store))
       if (tool === 'stage_policy_change') {
         setSimulation((current) => current ?? approvedSimulation(store))
         setPlanOutcome('staged')

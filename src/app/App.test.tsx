@@ -46,9 +46,14 @@ function luminance(color: readonly [number, number, number]) {
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 }
 
+function contrastRatio(foreground: readonly [number, number, number], background: readonly [number, number, number]) {
+  const lighter = Math.max(luminance(foreground), luminance(background))
+  const darker = Math.min(luminance(foreground), luminance(background))
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
 function contrastAgainstWhite(element: Element) {
-  const foreground = luminance(rgb(getComputedStyle(element).color))
-  return 1.05 / (foreground + 0.05)
+  return contrastRatio(rgb(getComputedStyle(element).color), [255, 255, 255])
 }
 
 beforeEach(() => {
@@ -210,7 +215,7 @@ describe('StagedOps application', () => {
     await waitFor(() => expect(trigger).toHaveFocus())
   })
 
-  it('makes agent filters, inspection, simulation, and a newly staged plan immediately visible', async () => {
+  it('makes agent context visible in place and opens only a newly staged plan', async () => {
     const { store, agentContext } = renderApp()
     const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
 
@@ -230,6 +235,9 @@ describe('StagedOps application', () => {
     })
     if (!simulated?.ok) throw new Error('simulation should succeed')
     const simulationId = simulated.data.simulationId
+    expect(screen.getByRole('heading', { level: 1, name: 'Managed devices' })).toBeVisible()
+    expect(screen.getByRole('region', { name: 'Latest agent result' })).toHaveTextContent('simulate_policy_change')
+    fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
     expect(await screen.findByText('10 conflicts resolved · 0 new conflicts')).toBeVisible()
     await act(async () => {
       await handlers.stage_policy_change({ simulationId, expectedConfigRevision: 1 })
@@ -239,6 +247,40 @@ describe('StagedOps application', () => {
     expect(within(plan).getByRole('heading', { name: 'Change plan' })).toHaveFocus()
     fireEvent.click(within(plan).getByRole('button', { name: 'Close change plan' }))
     expect(screen.getByRole('region', { name: 'Latest agent result' })).toHaveTextContent('stage_policy_change')
+  })
+
+  it('keeps successful read-tool results in the current view without stealing focus', async () => {
+    const { store, agentContext } = renderApp()
+    const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+    const reset = screen.getByRole('button', { name: 'Reset demo' })
+    reset.focus()
+
+    const expectStableOverview = async (tool: string) => {
+      await waitFor(() => expect(screen.getByRole('region', { name: 'Latest agent result' })).toHaveTextContent(tool))
+      await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, 0)) })
+      expect(screen.getByRole('heading', { level: 1, name: 'Operations overview' })).toBeVisible()
+      expect(reset).toHaveFocus()
+    }
+
+    await act(async () => { await handlers.find_devices({ departments: ['Finance'] }) })
+    await expectStableOverview('find_devices')
+    expect(agentContext.getSnapshot().fleetFilters).toMatchObject({ departments: ['Finance'] })
+
+    await act(async () => { await handlers.inspect_device({ deviceId: 'dev-021' }) })
+    await expectStableOverview('inspect_device')
+    expect(agentContext.getSnapshot().selectedDeviceId).toBe('dev-021')
+
+    await act(async () => { await handlers.explain_policy_conflicts({ deviceIds: ['dev-021'] }) })
+    await expectStableOverview('explain_policy_conflicts')
+    expect(agentContext.getSnapshot().selectedConflictDeviceIds).toEqual(['dev-021'])
+
+    await act(async () => {
+      await handlers.simulate_policy_change({
+        policyId: 'pol-rapid-update-enforcement', field: 'updates.restartDeadlineDays', proposedValue: 7, expectedConfigRevision: 1,
+      })
+    })
+    await expectStableOverview('simulate_policy_change')
+    expect(agentContext.getSnapshot().simulation).toMatchObject({ simulationId: 'sim-cfg1-production-restart-7d' })
   })
 
   it('removes stale simulation and stage actions after apply, then restores the baseline actions after rollback', async () => {
@@ -278,6 +320,7 @@ describe('StagedOps application', () => {
 
     await act(async () => { await handlers.find_devices({ departments: ['Finance'] }) })
     await act(async () => { await handlers.inspect_device({ deviceId: 'dev-021' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
     expect(screen.getByRole('region', { name: 'Device inspector' })).toHaveTextContent('dev-021')
     await act(async () => {
       await handlers.simulate_policy_change({
@@ -309,6 +352,7 @@ describe('StagedOps application', () => {
   it('preserves multi-value agent filters in the visible scope and matching device set', async () => {
     const { store, agentContext } = renderApp()
     const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
 
     await act(async () => {
       await handlers.find_devices({
@@ -330,6 +374,25 @@ describe('StagedOps application', () => {
     expect(inventory).toHaveTextContent('dev-021')
     expect(inventory).toHaveTextContent('dev-037')
     expect(inventory).toHaveTextContent('dev-045')
+  })
+
+  it('clears agent attribution when a human edits or clears derived filters', async () => {
+    const { store, agentContext } = renderApp()
+    const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
+
+    await act(async () => { await handlers.find_devices({ departments: ['Finance'] }) })
+    expect(await screen.findByRole('status', { name: 'Active agent filter scope' })).toHaveTextContent('Departments: Finance')
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Department' }), { target: { value: 'Sales' } })
+    expect(screen.queryByRole('status', { name: 'Active agent filter scope' })).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox', { name: 'Department' })).toHaveValue('Sales')
+
+    await act(async () => { await handlers.find_devices({ departments: ['Finance', 'Sales'] }) })
+    expect(await screen.findByRole('status', { name: 'Active agent filter scope' })).toHaveTextContent('Departments: Finance + Sales')
+    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.queryByRole('status', { name: 'Active agent filter scope' })).not.toBeInTheDocument()
+    expect(screen.getByText('60 devices')).toBeVisible()
   })
 
   it('shows conflict-precedence and effective-deadline evidence for dev-035 before and after apply', async () => {
@@ -383,6 +446,41 @@ describe('StagedOps application', () => {
     act(() => { stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, actor: 'Agent' }) })
     fireEvent.click(screen.getByRole('button', { name: 'Audit' }))
     expect(contrastAgainstWhite(screen.getByText('Agent', { selector: '.actor-agent' }))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('uses an opaque focus ring with at least 3:1 contrast on both app backgrounds', () => {
+    renderApp()
+    const focusRing = (document.querySelector('.app-shell') as HTMLElement).style.getPropertyValue('--focus-ring').trim()
+    expect(focusRing).toMatch(/^#[\da-f]{6}$/i)
+    expect(contrastRatio(rgb(focusRing), [255, 255, 255])).toBeGreaterThanOrEqual(3)
+    expect(contrastRatio(rgb(focusRing), [245, 247, 250])).toBeGreaterThanOrEqual(3)
+  })
+
+  it('renders visible metadata, overlines, and device IDs at the locked 14px size', () => {
+    renderApp()
+    const metadataSize = (document.querySelector('.app-shell') as HTMLElement).style.getPropertyValue('--metadata-font-size').trim()
+    expect(metadataSize).toBe('14px')
+    expect(screen.getByText('Demo workspace', { selector: '.eyebrow' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+    expect(screen.getByText('Standard baseline')).toBeVisible()
+    const selectedScope = screen.getByRole('region', { name: 'Selected devices' })
+    expect(within(selectedScope).getByText('dev-021')).toBeVisible()
+  })
+
+  it('keeps pagination and resolved-device disclosure targets at least 44px', async () => {
+    renderApp()
+    const touchTargetSize = (document.querySelector('.app-shell') as HTMLElement).style.getPropertyValue('--touch-target-size').trim()
+    expect(touchTargetSize).toBe('44px')
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
+    expect(screen.getByRole('button', { name: 'Previous page' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Next page' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Overview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate safe change' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stage change plan' }))
+    const plan = await screen.findByRole('dialog', { name: 'Change plan' })
+    expect(within(plan).getByText('10 resolved devices')).toBeVisible()
   })
 
   it('uses the locked 14px control token and keeps the responsive trend Today point', () => {
