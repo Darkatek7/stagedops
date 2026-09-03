@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useRef, useState, type ReactNode, type Ref } from 'react'
+import { useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react'
 import {
   Activity,
   FileClock,
@@ -19,6 +19,8 @@ const navigation = [
   { id: 'policies', label: 'Policies', icon: ShieldCheck },
   { id: 'audit', label: 'Audit', icon: FileClock },
 ] as const
+
+const accessibleTheme = { '--teal-text': '#0e7490', '--control-font-size': '14px' } as CSSProperties
 
 const viewTitles: Record<ViewName, { title: string; detail: string }> = {
   overview: { title: 'Operations overview', detail: 'Fleet health and the active policy decision.' },
@@ -73,7 +75,7 @@ export function AppShell({ view, onViewChange, onReset, toolStatus, authorizatio
   }
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" style={accessibleTheme}>
       <a className="skip-link" href="#main-content">Skip to main content</a>
 
       <aside className="app-rail" aria-label="Application navigation">

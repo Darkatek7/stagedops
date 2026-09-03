@@ -26,10 +26,13 @@ export function PoliciesView({ policies, selectedConflictDeviceIds, simulation, 
           <ArrowRight className="comparison-arrow" aria-hidden="true" />
           <article><Layers3 aria-hidden="true" /><span>Higher-precedence assignment</span><h3>Rapid Update Enforcement</h3><dl><div><dt>Field</dt><dd><code>updates.restartDeadlineDays</code></dd></div><div><dt>Value</dt><dd>{rapid?.updates.restartDeadlineDays} days</dd></div><div><dt>Assigned</dt><dd>12 Production devices</dd></div></dl></article>
         </div>
-        <div className="root-cause">
+        {resolved ? <div className="root-cause aligned-state">
+          <CheckCircle2 aria-hidden="true" />
+          <div><h3>Aligned policy state</h3><p>Both policies now assign a 7-day restart deadline to the same Production scope.</p></div>
+        </div> : <div className="root-cause">
           <AlertTriangle aria-hidden="true" />
           <div><h3>Root cause</h3><p>Both policies target Finance, Operations, and Sales in the Production ring. The shared restart-deadline field differs, so the devices cannot resolve one effective value.</p></div>
-        </div>
+        </div>}
       </section>
 
       <section className="surface selected-scope" aria-labelledby="selected-scope-title">
@@ -39,7 +42,7 @@ export function PoliciesView({ policies, selectedConflictDeviceIds, simulation, 
 
       <section className="surface policy-simulation" aria-labelledby="policy-simulation-title">
         <div className="section-heading"><div><span className="eyebrow">Safe preview</span><h2 id="policy-simulation-title">Simulation preview</h2></div></div>
-        {simulation ? <div className="policy-simulation-result" role="region" aria-label="Simulation result" aria-live="polite">
+        {resolved ? <div className="policy-aligned-result" role="status"><CheckCircle2 aria-hidden="true" /><div><strong>No change is available to stage</strong><p>The current 7-day values are aligned. Rollback remains available from the applied change plan.</p></div></div> : simulation ? <div className="policy-simulation-result" role="region" aria-label="Simulation result" aria-live="polite">
           <CheckCircle2 aria-hidden="true" />
           <div><strong>10 conflicts resolved · 0 new conflicts</strong><p>Simulation only — no endpoint settings changed. dev-035 and dev-036 remain blocked by OS 11.2.</p></div>
           <dl className="policy-simulation-metrics">

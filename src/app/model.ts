@@ -1,26 +1,30 @@
-import type { Device, FleetEvaluation, Ring } from '../domain/stagedOps'
+import type { Department, Device, FleetEvaluation, Ring } from '../domain/stagedOps'
 
 export type ViewName = 'overview' | 'devices' | 'policies' | 'audit'
 export type DeviceStatus = 'ALL' | 'POLICY_CONFLICT' | 'OS_VERSION_BLOCKED' | 'COMPLIANT'
 
 export interface DeviceFilters {
   readonly query: string
-  readonly department: string
-  readonly ring: Ring | ''
-  readonly status: DeviceStatus
+  readonly departments: readonly Department[]
+  readonly rings: readonly Ring[]
+  readonly statuses: readonly Exclude<DeviceStatus, 'ALL'>[]
 }
 
 export const emptyDeviceFilters: DeviceFilters = {
   query: '',
-  department: '',
-  ring: '',
-  status: 'ALL',
+  departments: [],
+  rings: [],
+  statuses: [],
 }
 
 export function statusForDevice(device: Device, evaluation: FleetEvaluation): Exclude<DeviceStatus, 'ALL'> {
-  if (evaluation.osBlockers.some((blocker) => blocker.id === device.id)) return 'OS_VERSION_BLOCKED'
   if (evaluation.conflictDeviceIds.includes(device.id)) return 'POLICY_CONFLICT'
+  if (evaluation.osBlockers.some((blocker) => blocker.id === device.id)) return 'OS_VERSION_BLOCKED'
   return 'COMPLIANT'
+}
+
+export function effectiveDeadlineForDevice(device: Device, evaluation: FleetEvaluation, rapidDeadlineDays: number) {
+  return evaluation.conflictDeviceIds.includes(device.id) ? 'Conflict' : `${rapidDeadlineDays} days`
 }
 
 export function statusLabel(status: Exclude<DeviceStatus, 'ALL'>) {
@@ -47,8 +51,8 @@ export function filtersFromAgent(value: unknown): Partial<DeviceFilters> | null 
   const statuses = Array.isArray(record.statuses) ? record.statuses : []
   return {
     query: typeof record.query === 'string' ? record.query : '',
-    department: typeof departments[0] === 'string' ? departments[0] : '',
-    ring: rings[0] === 'Pilot' || rings[0] === 'Staging' || rings[0] === 'Production' ? rings[0] : '',
-    status: statuses[0] === 'POLICY_CONFLICT' || statuses[0] === 'OS_VERSION_BLOCKED' || statuses[0] === 'COMPLIANT' ? statuses[0] : 'ALL',
+    departments: departments.filter((item): item is Department => item === 'Engineering' || item === 'Finance' || item === 'Operations' || item === 'Sales' || item === 'Support'),
+    rings: rings.filter((item): item is Ring => item === 'Pilot' || item === 'Staging' || item === 'Production'),
+    statuses: statuses.filter((item): item is Exclude<DeviceStatus, 'ALL'> => item === 'POLICY_CONFLICT' || item === 'OS_VERSION_BLOCKED' || item === 'COMPLIANT'),
   }
 }

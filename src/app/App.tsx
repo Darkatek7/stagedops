@@ -54,7 +54,6 @@ export function App({ store, agentContext }: AppProps) {
   const [planOutcome, setPlanOutcome] = useState<PlanOutcome>(() => getRollbackChangeId(store) ? 'applied' : 'staged')
   const [planError, setPlanError] = useState<string | null>(null)
   const [resetConfirmationOpen, setResetConfirmationOpen] = useState(false)
-  const [suppressedAgentResult, setSuppressedAgentResult] = useState<unknown>(null)
   const [planReturnFocus, setPlanReturnFocus] = useState<HTMLElement | null>(null)
   const processedAgentResultRef = useRef<unknown>(null)
 
@@ -66,7 +65,7 @@ export function App({ store, agentContext }: AppProps) {
   const devices = getDevices()
   const rapidPolicy = policies.find((policy) => policy.id === 'pol-rapid-update-enforcement')
   const affectedDevices = devices.filter((device) => rapidPolicy?.targetDeviceIds.includes(device.id))
-  const latestAgentResult = agent.latestResult === suppressedAgentResult ? null : agent.latestResult
+  const latestAgentResult = agent.latestResult
   const externalFilters = useMemo(() => filtersFromAgent(agent.fleetFilters), [agent.fleetFilters])
 
   useEffect(() => {
@@ -80,7 +79,7 @@ export function App({ store, agentContext }: AppProps) {
   }, [agentContext, store])
 
   useEffect(() => {
-    if (!agent.latestResult || agent.latestResult === suppressedAgentResult || agent.latestResult === processedAgentResultRef.current) return
+    if (!agent.latestResult || agent.latestResult === processedAgentResultRef.current) return
     const result = agent.latestResult
     const timeout = window.setTimeout(() => {
       processedAgentResultRef.current = result
@@ -98,11 +97,11 @@ export function App({ store, agentContext }: AppProps) {
         setPlanOpen(true)
       }
       if (tool === 'get_staged_change' && snapshot.stagedChange && planOpen) setPlanOutcome('staged')
-      if (tool === 'apply_staged_change') setPlanOutcome('applied')
-      if (tool === 'rollback_last_change') setPlanOutcome('rolledback')
+      if (tool === 'apply_staged_change') { setSimulation(null); setPlanOutcome('applied') }
+      if (tool === 'rollback_last_change') { setSimulation(null); setPlanOutcome('rolledback') }
     }, 0)
     return () => window.clearTimeout(timeout)
-  }, [agent, planOpen, snapshot.stagedChange, store, suppressedAgentResult])
+  }, [agent, planOpen, snapshot.stagedChange, store])
 
   const openPlan = (trigger?: HTMLElement) => {
     setPlanReturnFocus(trigger ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null))
@@ -131,6 +130,7 @@ export function App({ store, agentContext }: AppProps) {
   const handleApply = () => {
     const result = applyStagedChange(store, { actor: 'Human', authorizationId: snapshot.authorization?.id })
     if (!result.ok) { setPlanError(result.error.message); return }
+    setSimulation(null)
     setPlanError(null)
     setPlanOutcome('applied')
   }
@@ -138,6 +138,7 @@ export function App({ store, agentContext }: AppProps) {
   const handleRollback = () => {
     const result = rollbackLastChange(store, { actor: 'Human' })
     if (!result.ok) { setPlanError(result.error.message); return }
+    setSimulation(null)
     setPlanError(null)
     setPlanOutcome('rolledback')
   }
@@ -145,8 +146,8 @@ export function App({ store, agentContext }: AppProps) {
   const handleReset = () => {
     const result = resetDemo(store)
     if (!result.ok) return
-    setSuppressedAgentResult(agent.latestResult)
-    processedAgentResultRef.current = agent.latestResult
+    agentContext.resetTransient()
+    processedAgentResultRef.current = null
     setView('overview')
     setSimulation(null)
     setSelectedDeviceId(null)

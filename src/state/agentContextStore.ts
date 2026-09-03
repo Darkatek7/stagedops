@@ -20,6 +20,7 @@ export interface AgentContextStore {
   setRegistration(status: ToolRegistrationStatus, registeredCount: number): void
   setApplyRegistered(registered: boolean): void
   publishResult(result: unknown, signals?: ResultSignals): void
+  resetTransient(): void
 }
 
 const initialSnapshot: AgentContextSnapshot = Object.freeze({
@@ -47,6 +48,17 @@ export function createAgentContextStore(): AgentContextStore {
     setRegistration(toolStatus, registeredCount) { publish({ ...snapshot, toolStatus, registeredCount }) },
     setApplyRegistered(applyRegistered) { publish({ ...snapshot, applyRegistered }) },
     publishResult(latestResult, signals = {}) { publish({ ...snapshot, ...signals, latestResult }) },
+    resetTransient() {
+      publish({
+        ...snapshot,
+        latestResult: null,
+        fleetFilters: null,
+        selectedDeviceId: null,
+        selectedConflictDeviceIds: initialSnapshot.selectedConflictDeviceIds,
+        simulation: null,
+        drawerOpen: false,
+      })
+    },
   }
 }
 

@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  applyStagedChange,
   authorizeStagedChange,
   createStagedOpsStore,
   stagePolicyChange,
@@ -25,6 +26,29 @@ function fixture() {
 function renderApp() {
   const value = fixture()
   return { ...value, ...render(<App store={value.store} agentContext={value.agentContext} />) }
+}
+
+function rgb(value: string): readonly [number, number, number] {
+  if (/^#[\da-f]{6}$/i.test(value.trim())) {
+    const hex = value.trim().slice(1)
+    return [Number.parseInt(hex.slice(0, 2), 16), Number.parseInt(hex.slice(2, 4), 16), Number.parseInt(hex.slice(4, 6), 16)]
+  }
+  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number)
+  if (!channels || channels.length !== 3) throw new Error(`Expected an RGB color, received ${value}`)
+  return channels as unknown as readonly [number, number, number]
+}
+
+function luminance(color: readonly [number, number, number]) {
+  const [red, green, blue] = color.map((channel) => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+}
+
+function contrastAgainstWhite(element: Element) {
+  const foreground = luminance(rgb(getComputedStyle(element).color))
+  return 1.05 / (foreground + 0.05)
 }
 
 beforeEach(() => {
@@ -125,7 +149,7 @@ describe('StagedOps application', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
     expect(screen.getByRole('searchbox', { name: 'Search devices' })).toHaveValue('')
     fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'POLICY_CONFLICT' } })
-    expect(screen.getByText('10 devices')).toBeVisible()
+    expect(screen.getByText('12 devices')).toBeVisible()
 
     const deviceHeader = screen.getByRole('columnheader', { name: /Device/ })
     expect(deviceHeader).toHaveAttribute('aria-sort', 'ascending')
@@ -215,5 +239,162 @@ describe('StagedOps application', () => {
     expect(within(plan).getByRole('heading', { name: 'Change plan' })).toHaveFocus()
     fireEvent.click(within(plan).getByRole('button', { name: 'Close change plan' }))
     expect(screen.getByRole('region', { name: 'Latest agent result' })).toHaveTextContent('stage_policy_change')
+  })
+
+  it('removes stale simulation and stage actions after apply, then restores the baseline actions after rollback', async () => {
+    renderApp()
+    fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate safe change' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stage change plan' }))
+
+    let plan = await screen.findByRole('dialog', { name: 'Change plan' })
+    fireEvent.click(within(plan).getByRole('button', { name: 'Authorize agent' }))
+    fireEvent.click(within(plan).getByRole('button', { name: 'Apply manually' }))
+    expect((await within(plan).findAllByText('Applied successfully')).length).toBeGreaterThan(0)
+    fireEvent.click(within(plan).getByRole('button', { name: 'Close change plan' }))
+
+    expect(screen.getByText('Aligned')).toBeVisible()
+    expect(screen.getByText('Both policies now assign a 7-day restart deadline to the same Production scope.')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Simulation result' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Stage change plan' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Simulate safe change' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Overview' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review applied change' }))
+    plan = await screen.findByRole('dialog', { name: 'Change plan' })
+    fireEvent.click(within(plan).getByRole('button', { name: 'Rollback last change' }))
+    const confirmation = await screen.findByRole('dialog', { name: 'Rollback last change' })
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Confirm rollback' }))
+    fireEvent.click(within(plan).getByRole('button', { name: 'Close' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Policies' }))
+
+    expect(screen.getByText('Collision detected')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Simulate safe change' })).toBeEnabled()
+  })
+
+  it('clears transient agent filters, selection, simulation, latest result, and drawer intent on demo reset', async () => {
+    const { store, agentContext } = renderApp()
+    const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+
+    await act(async () => { await handlers.find_devices({ departments: ['Finance'] }) })
+    await act(async () => { await handlers.inspect_device({ deviceId: 'dev-021' }) })
+    expect(screen.getByRole('region', { name: 'Device inspector' })).toHaveTextContent('dev-021')
+    await act(async () => {
+      await handlers.simulate_policy_change({
+        policyId: 'pol-rapid-update-enforcement', field: 'updates.restartDeadlineDays', proposedValue: 7, expectedConfigRevision: 1,
+      })
+    })
+    expect(agentContext.getSnapshot().simulation).not.toBeNull()
+    expect(agentContext.getSnapshot().drawerOpen).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset demo' }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Reset demo' })).getByRole('button', { name: 'Confirm reset' }))
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Operations overview' })).toBeVisible())
+
+    expect(agentContext.getSnapshot()).toMatchObject({
+      latestResult: null,
+      fleetFilters: null,
+      selectedDeviceId: null,
+      selectedConflictDeviceIds: [],
+      simulation: null,
+      drawerOpen: false,
+    })
+    expect(screen.queryByRole('region', { name: 'Latest agent result' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
+    expect(screen.getByRole('combobox', { name: 'Department' })).toHaveValue('')
+    expect(screen.getByText('60 devices')).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Device inspector' })).not.toBeInTheDocument()
+  })
+
+  it('preserves multi-value agent filters in the visible scope and matching device set', async () => {
+    const { store, agentContext } = renderApp()
+    const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+
+    await act(async () => {
+      await handlers.find_devices({
+        departments: ['Finance', 'Sales'],
+        rings: ['Pilot', 'Production'],
+        statuses: ['POLICY_CONFLICT', 'COMPLIANT'],
+        limit: 60,
+      })
+    })
+
+    const scope = await screen.findByRole('status', { name: 'Active agent filter scope' })
+    expect(scope).toHaveTextContent('Departments: Finance + Sales')
+    expect(scope).toHaveTextContent('Rings: Pilot + Production')
+    expect(scope).toHaveTextContent('Statuses: Policy conflict + Compliant')
+    expect(screen.getByText('12 devices')).toBeVisible()
+    const inventory = screen.getByRole('region', { name: 'Managed devices' })
+    expect(within(inventory).getAllByRole('row')).toHaveLength(13)
+    expect(inventory).toHaveTextContent('dev-013')
+    expect(inventory).toHaveTextContent('dev-021')
+    expect(inventory).toHaveTextContent('dev-037')
+    expect(inventory).toHaveTextContent('dev-045')
+  })
+
+  it('shows conflict-precedence and effective-deadline evidence for dev-035 before and after apply', async () => {
+    const { store } = renderApp()
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search devices' }), { target: { value: 'dev-035' } })
+
+    let row = screen.getByRole('row', { name: /dev-035/ })
+    expect(row).toHaveTextContent('Policy conflict')
+    expect(row).toHaveTextContent('Conflict')
+    fireEvent.click(within(row).getByRole('button', { name: 'Inspect dev-035' }))
+    let inspector = screen.getByRole('region', { name: 'Device inspector' })
+    expect(inspector).toHaveTextContent('Policy conflict')
+    expect(inspector).toHaveTextContent('Effective deadlineConflict')
+
+    const mobileCard = within(screen.getByLabelText('Device records')).getByText('dev-035').closest('article')
+    expect(mobileCard).toHaveTextContent('Effective deadline')
+    expect(mobileCard).toHaveTextContent('Last check-in')
+    expect(mobileCard).toHaveTextContent('Conflict')
+
+    await act(async () => {
+      const staged = stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, actor: 'Human' })
+      if (!staged.ok) throw new Error('stage should succeed')
+      const authorized = authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+      if (!authorized.ok) throw new Error('authorization should succeed')
+      const applied = applyStagedChange(store, { actor: 'Human', authorizationId: authorized.data.id })
+      if (!applied.ok) throw new Error('apply should succeed')
+    })
+
+    row = screen.getByRole('row', { name: /dev-035/ })
+    expect(row).toHaveTextContent('OS prerequisite blocked')
+    expect(row).toHaveTextContent('7 days')
+    inspector = screen.getByRole('region', { name: 'Device inspector' })
+    expect(inspector).toHaveTextContent('OS prerequisite blocked')
+    expect(inspector).toHaveTextContent('Effective deadline7 days')
+  })
+
+  it('keeps small teal labels and Agent evidence at WCAG AA text contrast', async () => {
+    const { store, agentContext } = renderApp()
+    const textTeal = (document.querySelector('.app-shell') as HTMLElement).style.getPropertyValue('--teal-text').trim()
+    expect(textTeal).not.toBe('')
+    if (!textTeal) return
+    expect(1.05 / (luminance(rgb(textTeal)) + 0.05)).toBeGreaterThanOrEqual(4.5)
+    expect(contrastAgainstWhite(screen.getByText('Demo workspace', { selector: '.eyebrow' }))).toBeGreaterThanOrEqual(4.5)
+
+    const handlers = createToolHandlers({ store, agentContext, now: () => 1_800_000_000_000 })
+    await act(async () => { await handlers.get_fleet_summary({}) })
+    const latestLabel = within(await screen.findByRole('region', { name: 'Latest agent result' })).getByText('Latest agent result')
+    expect(contrastAgainstWhite(latestLabel)).toBeGreaterThanOrEqual(4.5)
+
+    act(() => { stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, actor: 'Agent' }) })
+    fireEvent.click(screen.getByRole('button', { name: 'Audit' }))
+    expect(contrastAgainstWhite(screen.getByText('Agent', { selector: '.actor-agent' }))).toBeGreaterThanOrEqual(4.5)
+  })
+
+  it('uses the locked 14px control token and keeps the responsive trend Today point', () => {
+    renderApp()
+    const trend = screen.getByRole('img', { name: 'Seven day compliance trend' })
+    expect(trend).not.toHaveAttribute('width', '390')
+    expect(within(trend).getByText('Today')).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Devices' }))
+    const controlSize = (document.querySelector('.app-shell') as HTMLElement).style.getPropertyValue('--control-font-size')
+    expect(controlSize).toBe('14px')
+    expect(screen.getByRole('combobox', { name: 'Department' })).toBeVisible()
+    expect(screen.getAllByRole('button', { name: 'Inspect dev-035' })).toHaveLength(2)
   })
 })

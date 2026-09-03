@@ -86,7 +86,7 @@ function FleetHealth({ summary, evaluation }: { summary: FleetSummary; evaluatio
         </ul>
         <div className="trend-chart">
           <h3>Compliance over time</h3>
-          <LineChart width={390} height={148} data={trend} margin={{ top: 12, right: 16, bottom: 0, left: -18 }} role="img" aria-label="Seven day compliance trend">
+          <LineChart responsive style={{ width: '100%', height: 148 }} data={trend} margin={{ top: 12, right: 16, bottom: 0, left: -18 }} role="img" aria-label="Seven day compliance trend">
             <XAxis dataKey="day" axisLine={false} tickLine={false} fontSize={11} />
             <YAxis domain={[60, 100]} axisLine={false} tickLine={false} fontSize={11} />
             <Tooltip />
@@ -120,10 +120,10 @@ function ConflictWorkbench({ summary, simulation, stagedChange, hasRollback, onR
   return (
     <section className="surface conflict-workbench" aria-labelledby="conflict-title">
       <div className="section-heading">
-        <div><span className="eyebrow">Current conflict</span><h2 id="conflict-title">Restart deadline policy collision</h2></div>
+        <div><span className="eyebrow">{resolved ? 'Current policy state' : 'Current conflict'}</span><h2 id="conflict-title">{resolved ? 'Restart deadline policies aligned' : 'Restart deadline policy collision'}</h2></div>
         <span className={`status-chip ${resolved ? 'status-success' : 'status-warning'}`}><span aria-hidden="true">{resolved ? '✓' : '!'}</span>{resolved ? 'Resolved' : '12 affected devices'}</span>
       </div>
-      <p className="workbench-summary">Two policies target the same Production scope with different values for <code>updates.restartDeadlineDays</code>.</p>
+      <p className="workbench-summary">{resolved ? <>Both policies now set <code>updates.restartDeadlineDays</code> to 7 days for the same Production scope.</> : <>Two policies target the same Production scope with different values for <code>updates.restartDeadlineDays</code>.</>}</p>
       <div className="policy-evidence">
         <div><span>Standard Update Window</span><strong>7 days</strong></div>
         <ArrowRight aria-hidden="true" />
@@ -134,7 +134,7 @@ function ConflictWorkbench({ summary, simulation, stagedChange, hasRollback, onR
         <div><dt>Field</dt><dd><code>updates.restartDeadlineDays</code></dd></div>
       </dl>
       <div className="workbench-actions">
-        <button className="button button-secondary" type="button" onClick={onReviewConflict}>Review conflict</button>
+        <button className="button button-secondary" type="button" onClick={onReviewConflict}>{resolved ? 'Review policy state' : 'Review conflict'}</button>
         {!resolved && !simulation ? <button className="button button-primary" type="button" onClick={onSimulate}>Simulate safe change</button> : null}
         {stagedChange ? <button className="button button-primary" type="button" data-plan-trigger="true" onClick={(event) => onReviewStage(event.currentTarget)}>Review staged change</button> : null}
         {hasRollback && !stagedChange ? <button className="button button-primary" type="button" data-plan-trigger="true" onClick={(event) => onReviewStage(event.currentTarget)}>Review applied change</button> : null}
