@@ -11,10 +11,13 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.23",
     "@vitejs/plugin-react": "latest",
     "ajv": "^8.20.0",
+    "lucide-react": "^1.39.0",
     "react": "latest",
     "react-dom": "latest",
+    "recharts": "^3.10.1",
     "vite": "latest",
     "webmcp-types": "^0.1.5"
   },
