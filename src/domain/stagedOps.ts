@@ -47,6 +47,7 @@ interface RollbackPoint {
 interface PersistentState {
   readonly stateRevision: number
   readonly configRevision: number
+  readonly devices: readonly Device[]
   readonly policies: readonly Policy[]
   readonly stagedChange: StagedChange | null
   readonly rollbackPoint: RollbackPoint | null
@@ -148,7 +149,7 @@ function initialPolicies(): readonly Policy[] {
 }
 
 function initialState(): PersistentState {
-  return freeze({ stateRevision: 1, configRevision: 1, policies: initialPolicies(), stagedChange: null, rollbackPoint: null, audit: freeze([]), sequence: 0 })
+  return freeze({ stateRevision: 1, configRevision: 1, devices: seedDevices, policies: initialPolicies(), stagedChange: null, rollbackPoint: null, audit: freeze([]), sequence: 0 })
 }
 
 function freeze<T>(value: T): T {
@@ -165,6 +166,16 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function isPositiveInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 1 }
 function isNonNegativeFiniteNumber(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0 }
 function hasExactValues(values: readonly string[], expected: readonly string[]): boolean { return values.length === expected.length && values.every((value, index) => value === expected[index]) }
+function isDevice(value: unknown): value is Device {
+  return isRecord(value) && typeof value.id === 'string' && typeof value.name === 'string' && departments.includes(value.department as Department)
+    && (value.ring === 'Pilot' || value.ring === 'Staging' || value.ring === 'Production') && typeof value.osVersion === 'string'
+}
+function hasExactDevices(devices: readonly Device[], expected: readonly Device[]): boolean {
+  return devices.length === expected.length && devices.every((device, index) => {
+    const seed = expected[index]
+    return device.id === seed.id && device.name === seed.name && device.department === seed.department && device.ring === seed.ring && device.osVersion === seed.osVersion
+  })
+}
 function expectedPolicyName(id: string): string | undefined {
   if (id === 'pol-standard-update-window') return 'Standard update window'
   if (id === 'pol-rapid-update-enforcement') return 'Rapid update enforcement'
@@ -188,17 +199,38 @@ function isAuditEvent(value: unknown): value is AuditEvent {
 function isRollbackPoint(value: unknown): value is RollbackPoint {
   return isRecord(value) && Array.isArray(value.policies) && value.policies.length === 2 && value.policies.every(isPolicy) && typeof value.appliedChangeId === 'string' && /^change-\d{6}$/.test(value.appliedChangeId)
 }
+function hasExactPolicies(policies: readonly Policy[], expected: readonly Policy[]): boolean {
+  return policies.length === expected.length && policies.every((policy, index) => {
+    const expectedPolicy = expected[index]
+    return policy.id === expectedPolicy.id && policy.name === expectedPolicy.name && hasExactValues(policy.targetDeviceIds, expectedPolicy.targetDeviceIds)
+      && policy.updates.restartDeadlineDays === expectedPolicy.updates.restartDeadlineDays
+  })
+}
+function sameStage(actual: StagedChange | null, expected: StagedChange | null): boolean {
+  return actual === expected || (actual !== null && expected !== null && actual.id === expected.id && actual.policyId === expected.policyId
+    && actual.restartDeadlineDays === expected.restartDeadlineDays && actual.baseConfigRevision === expected.baseConfigRevision)
+}
+function sameRollbackPoint(actual: RollbackPoint | null, expected: RollbackPoint | null): boolean {
+  return actual === expected || (actual !== null && expected !== null && actual.appliedChangeId === expected.appliedChangeId && hasExactPolicies(actual.policies, expected.policies))
+}
 
 function validState(value: unknown): value is PersistentState {
   if (!isRecord(value)) return false
   const state = value as Record<string, unknown>
-  const { stateRevision, configRevision: persistedConfigRevision, sequence, policies, audit, stagedChange, rollbackPoint } = state
+  const { stateRevision, configRevision: persistedConfigRevision, sequence, devices, policies, audit, stagedChange, rollbackPoint } = state
   if (!isPositiveInteger(stateRevision) || !isPositiveInteger(persistedConfigRevision) || typeof sequence !== 'number' || !Number.isSafeInteger(sequence) || sequence < 0
-    || stateRevision !== sequence + 1 || !Array.isArray(policies) || policies.length !== 2 || !policies.every(isPolicy)
+    || stateRevision !== sequence + 1 || !Array.isArray(devices) || !devices.every(isDevice) || !hasExactDevices(devices, seedDevices)
+    || !Array.isArray(policies) || policies.length !== 2 || !policies.every(isPolicy)
     || !hasExactValues(policies.map((policy) => policy.id), ['pol-standard-update-window', 'pol-rapid-update-enforcement'])
     || !Array.isArray(audit) || audit.length !== sequence || !audit.every(isAuditEvent)
     || (stagedChange !== null && !isStagedChange(stagedChange)) || (rollbackPoint !== null && !isRollbackPoint(rollbackPoint))) return false
 
+  const baselinePolicies = initialPolicies()
+  const appliedPolicies = changedPolicies({ policies: baselinePolicies }, 'pol-rapid-update-enforcement', 7)
+  let expectedPolicies = baselinePolicies
+  let expectedStage: StagedChange | null = null
+  let expectedRollback: RollbackPoint | null = null
+  let authorizedStageId: string | null = null
   let configRevision = 1
   let previousAt = 0
   for (const [index, event] of audit.entries()) {
@@ -208,16 +240,36 @@ function validState(value: unknown): value is PersistentState {
     configRevision += changesConfiguration ? 1 : 0
     if (event.configRevision !== configRevision) return false
     previousAt = event.at
+
+    if (event.action === 'stage') {
+      if (event.actor !== 'Human' || event.detail !== 'Staged pol-rapid-update-enforcement' || !hasExactPolicies(expectedPolicies, baselinePolicies)) return false
+      expectedStage = { id: `change-${String(sequence).padStart(6, '0')}`, policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, baseConfigRevision: configRevision, createdAt: event.at }
+      authorizedStageId = null
+    } else if (event.action === 'authorize') {
+      if (event.actor !== 'Human' || !expectedStage || event.detail !== `Authorized ${expectedStage.id}`) return false
+      authorizedStageId = expectedStage.id
+    } else if (event.action === 'apply') {
+      if (!expectedStage || authorizedStageId !== expectedStage.id || event.detail !== `Applied ${expectedStage.id}` || !hasExactPolicies(expectedPolicies, baselinePolicies)) return false
+      expectedPolicies = appliedPolicies
+      expectedRollback = { policies: baselinePolicies, appliedChangeId: expectedStage.id }
+      expectedStage = null
+      authorizedStageId = null
+    } else if (event.action === 'rollback') {
+      if (!expectedRollback || event.detail !== `Restored ${expectedRollback.appliedChangeId}` || !hasExactPolicies(expectedPolicies, appliedPolicies)) return false
+      expectedPolicies = baselinePolicies
+      expectedRollback = null
+      expectedStage = null
+      authorizedStageId = null
+    } else if (event.action === 'reset') {
+      if (event.actor !== 'Human' || event.detail !== 'Reset deterministic demo') return false
+      expectedPolicies = baselinePolicies
+      expectedStage = null
+      expectedRollback = null
+      authorizedStageId = null
+    }
   }
   if (persistedConfigRevision !== configRevision) return false
-
-  if (stagedChange) {
-    const stageSequence = Number(stagedChange.id.slice('change-'.length))
-    const stageEvent = audit[stageSequence - 1]
-    if (stagedChange.baseConfigRevision !== persistedConfigRevision || !stageEvent || stageEvent.action !== 'stage' || stageEvent.detail !== `Staged ${stagedChange.policyId}`) return false
-  }
-  if (rollbackPoint && !audit.some((event) => event.action === 'apply' && event.detail === `Applied ${rollbackPoint.appliedChangeId}`)) return false
-  return true
+  return hasExactPolicies(policies, expectedPolicies) && sameStage(stagedChange, expectedStage) && sameRollbackPoint(rollbackPoint, expectedRollback)
 }
 
 function hydrate(storage: StorageAdapter | undefined): PersistentState {
@@ -326,12 +378,12 @@ export function getPolicies(store: StagedOpsStore): readonly Policy[] { return i
 export function getStagedChange(store: StagedOpsStore): StagedChange | null { return internal(store).__internal.getState().stagedChange }
 export function getAuditLog(store: StagedOpsStore): readonly AuditEvent[] { return internal(store).__internal.getState().audit }
 
-function changedPolicies(state: PersistentState, policyId: string, restartDeadlineDays: number): readonly Policy[] {
+function changedPolicies(state: Pick<PersistentState, 'policies'>, policyId: string, restartDeadlineDays: number): readonly Policy[] {
   return freeze(state.policies.map((policy) => policy.id === policyId ? freeze({ ...policy, updates: freeze({ restartDeadlineDays }) }) : policy))
 }
 
 function validateChange(state: PersistentState, input: { policyId: string; restartDeadlineDays: number }): CommandResult<null> {
-  if (!state.policies.some((policy) => policy.id === input.policyId) || !Number.isInteger(input.restartDeadlineDays) || input.restartDeadlineDays < 1 || input.restartDeadlineDays > 30) return error('VALIDATION_ERROR', 'The requested policy change is invalid.')
+  if (input.policyId !== 'pol-rapid-update-enforcement' || input.restartDeadlineDays !== 7 || !hasExactPolicies(state.policies, initialPolicies())) return error('VALIDATION_ERROR', 'The requested policy change is not an approved deterministic simulation.')
   return { ok: true, data: null }
 }
 

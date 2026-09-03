@@ -4,6 +4,7 @@ import {
   applyStagedChange,
   authorizeStagedChange,
   createStagedOpsStore,
+  createSeedDevices,
   getAuditLog,
   getFleetSummary,
   getPolicies,
@@ -29,6 +30,39 @@ function persistedStage() {
   const staged = stagePolicyChange(store, rapidUpdate)
   if (!staged.ok) throw new Error('stage should succeed')
   return JSON.parse(storage.getItem(STORAGE_KEY)!) as { version: number; state: Record<string, unknown> }
+}
+
+function persistedApplied() {
+  const storage = new MemoryStorage()
+  const store = createStagedOpsStore({ storage })
+  const staged = stagePolicyChange(store, rapidUpdate)
+  if (!staged.ok) throw new Error('stage should succeed')
+  const authorization = authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+  if (!authorization.ok) throw new Error('authorization should succeed')
+  const applied = applyStagedChange(store, { actor: 'Human', authorizationId: authorization.data.id })
+  if (!applied.ok) throw new Error('apply should succeed')
+  return JSON.parse(storage.getItem(STORAGE_KEY)!) as { version: number; state: Record<string, unknown> }
+}
+
+function persistedRolledBack() {
+  const storage = new MemoryStorage()
+  const store = createStagedOpsStore({ storage })
+  const staged = stagePolicyChange(store, rapidUpdate)
+  if (!staged.ok) throw new Error('stage should succeed')
+  const authorization = authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+  if (!authorization.ok) throw new Error('authorization should succeed')
+  const applied = applyStagedChange(store, { actor: 'Human', authorizationId: authorization.data.id })
+  if (!applied.ok) throw new Error('apply should succeed')
+  const rolledBack = rollbackLastChange(store, { actor: 'Human' })
+  if (!rolledBack.ok) throw new Error('rollback should succeed')
+  return JSON.parse(storage.getItem(STORAGE_KEY)!) as { version: number; state: Record<string, unknown> }
+}
+
+function expectCorruptEnvelopeRecovery(envelope: { version: number; state: Record<string, unknown> }) {
+  const storage = new MemoryStorage()
+  storage.setItem(STORAGE_KEY, JSON.stringify(envelope))
+  const recovered = createStagedOpsStore({ storage })
+  expect(recovered.getSnapshot()).toMatchObject({ stateRevision: 1, configRevision: 1, sequence: 0, stagedChange: null, rollbackPoint: null, audit: [] })
 }
 
 describe('StagedOps deterministic domain engine', () => {
@@ -195,6 +229,40 @@ describe('StagedOps deterministic domain engine', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('resets an applied envelope whose rollback baseline policy was tampered', () => {
+    const envelope = persistedApplied()
+    const rollbackPoint = envelope.state.rollbackPoint as { policies: Array<{ updates: { restartDeadlineDays: number } }> }
+    rollbackPoint.policies[1].updates.restartDeadlineDays = 1
+
+    expectCorruptEnvelopeRecovery(envelope)
+  })
+
+  it('resets an applied envelope whose operational policy value was tampered', () => {
+    const envelope = persistedApplied()
+    const policies = envelope.state.policies as Array<{ updates: { restartDeadlineDays: number } }>
+    policies[1].updates.restartDeadlineDays = 8
+
+    expectCorruptEnvelopeRecovery(envelope)
+  })
+
+  it('resets an envelope with a rollback audit before its matching apply', () => {
+    const envelope = persistedRolledBack()
+    const audit = envelope.state.audit as Array<{ action: string; detail: string }>
+    ;[audit[2].action, audit[3].action] = [audit[3].action, audit[2].action]
+    ;[audit[2].detail, audit[3].detail] = [audit[3].detail, audit[2].detail]
+
+    expectCorruptEnvelopeRecovery(envelope)
+  })
+
+  it('resets an envelope whose deterministic device identity or scope was tampered', () => {
+    const envelope = persistedApplied()
+    envelope.state.devices = structuredClone(createSeedDevices())
+    const devices = envelope.state.devices as Array<{ id: string; ring: string }>
+    devices[0] = { ...devices[0], id: 'dev-999', ring: 'Production' }
+
+    expectCorruptEnvelopeRecovery(envelope)
   })
 
   it('does not publish a partial state when persistence fails', () => {
