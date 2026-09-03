@@ -10,6 +10,7 @@ import {
   getPolicies,
   getStagedChange,
   resetDemo,
+  revokeStagedAuthorization,
   rollbackLastChange,
   simulatePolicyChange,
   stagePolicyChange,
@@ -128,7 +129,7 @@ describe('StagedOps deterministic domain engine', () => {
     const renewed = authorizeStagedChange(store, { stagedChangeId: staged.data.id })
     if (!renewed.ok) throw new Error('authorization should succeed')
     stagePolicyChange(store, rapidUpdate)
-    expect(applyStagedChange(store, { actor: 'Human', authorizationId: renewed.data.id })).toMatchObject({ ok: false, error: { code: 'AUTHORIZATION_MISMATCH' } })
+    expect(applyStagedChange(store, { actor: 'Human', authorizationId: renewed.data.id })).toMatchObject({ ok: false, error: { code: 'AUTHORIZATION_REQUIRED' } })
 
     const freshStage = getStagedChange(store)
     if (!freshStage) throw new Error('stage should exist')
@@ -136,6 +137,30 @@ describe('StagedOps deterministic domain engine', () => {
     if (!freshAuthorization.ok) throw new Error('authorization should succeed')
     expect(applyStagedChange(store, { actor: 'Human', authorizationId: freshAuthorization.data.id })).toMatchObject({ ok: true })
     expect(applyStagedChange(store, { actor: 'Human', authorizationId: freshAuthorization.data.id })).toMatchObject({ ok: false, error: { code: 'NO_STAGED_CHANGE' } })
+  })
+
+  it('clears captured authorization on stage replacement and explicit revocation', () => {
+    let now = 1_000
+    const store = createStagedOpsStore({ storage: new MemoryStorage(), now: () => now })
+    const first = stagePolicyChange(store, rapidUpdate)
+    if (!first.ok) throw new Error('stage should succeed')
+    const firstAuthorization = authorizeStagedChange(store, { stagedChangeId: first.data.id })
+    if (!firstAuthorization.ok) throw new Error('authorization should succeed')
+
+    stagePolicyChange(store, rapidUpdate)
+    now += 300_001
+
+    expect(store.getSnapshot().authorization).toBeNull()
+    expect(applyStagedChange(store, { actor: 'Agent', authorizationId: firstAuthorization.data.id })).toMatchObject({ ok: false, error: { code: 'AUTHORIZATION_REQUIRED' } })
+
+    const replacement = getStagedChange(store)
+    if (!replacement) throw new Error('replacement stage should exist')
+    const replacementAuthorization = authorizeStagedChange(store, { stagedChangeId: replacement.id })
+    if (!replacementAuthorization.ok) throw new Error('authorization should succeed')
+    revokeStagedAuthorization(store)
+
+    expect(store.getSnapshot().authorization).toBeNull()
+    expect(applyStagedChange(store, { actor: 'Agent', authorizationId: replacementAuthorization.data.id })).toMatchObject({ ok: false, error: { code: 'AUTHORIZATION_REQUIRED' } })
   })
 
   it('applies atomically and rollbacks to the exact prior operational snapshot', () => {

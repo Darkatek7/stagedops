@@ -3,6 +3,7 @@ export type ToolRegistrationStatus = 'unsupported' | 'registering' | 'available'
 export interface AgentContextSnapshot {
   readonly toolStatus: ToolRegistrationStatus
   readonly registeredCount: number
+  readonly applyRegistered: boolean
   readonly latestResult: unknown
   readonly fleetFilters: unknown
   readonly selectedDeviceId: string | null
@@ -17,12 +18,14 @@ export interface AgentContextStore {
   getSnapshot(): AgentContextSnapshot
   subscribe(listener: () => void): () => void
   setRegistration(status: ToolRegistrationStatus, registeredCount: number): void
+  setApplyRegistered(registered: boolean): void
   publishResult(result: unknown, signals?: ResultSignals): void
 }
 
 const initialSnapshot: AgentContextSnapshot = Object.freeze({
   toolStatus: 'unsupported',
   registeredCount: 0,
+  applyRegistered: false,
   latestResult: null,
   fleetFilters: null,
   selectedDeviceId: null,
@@ -42,6 +45,7 @@ export function createAgentContextStore(): AgentContextStore {
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener) },
     setRegistration(toolStatus, registeredCount) { publish({ ...snapshot, toolStatus, registeredCount }) },
+    setApplyRegistered(applyRegistered) { publish({ ...snapshot, applyRegistered }) },
     publishResult(latestResult, signals = {}) { publish({ ...snapshot, ...signals, latestResult }) },
   }
 }

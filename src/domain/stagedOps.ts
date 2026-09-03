@@ -351,6 +351,7 @@ export function createStagedOpsStore(options: StoreOptions = {}): StagedOpsStore
   }
   function invalidateAuthorization() {
     clearAuthorizationExpiry()
+    authorization = null
     publish()
   }
   function persist(next: PersistentState): CommandResult<null> {

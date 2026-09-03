@@ -43,6 +43,15 @@ describe('WebMCP tool handlers', () => {
     }
   })
 
+  it('returns ABORTED before validating malformed input when cancellation already happened', async () => {
+    const controller = new AbortController()
+    controller.abort()
+
+    const result = await fixture().handlers.inspect_device(null, { signal: controller.signal })
+
+    expect(result).toMatchObject({ ok: false, tool: 'inspect_device', error: { code: 'ABORTED', issues: [] } })
+  })
+
   it('summarizes the fleet with separate conflict/blocker, scope, stage, auth, and rollback data', async () => {
     const result = await fixture().handlers.get_fleet_summary({})
     expect(result).toMatchObject({ ok: true, tool: 'get_fleet_summary', data: {
@@ -150,6 +159,17 @@ describe('WebMCP tool handlers', () => {
     expect(await f.handlers.simulate_policy_change({
       policyId: 'pol-rapid-update-enforcement', field: 'updates.restartDeadlineDays', proposedValue: 7, expectedConfigRevision: 2,
     })).toMatchObject({ ok: false, error: { code: 'NO_EFFECT' } })
+    expect(await f.handlers.stage_policy_change({ simulationId: 'sim-cfg2-production-restart-7d', expectedConfigRevision: 2 })).toMatchObject({ ok: false, error: { code: 'NO_EFFECT' } })
+  })
+
+  it('treats a replaced-stage captured authorization as revoked inside apply', async () => {
+    const f = await stage()
+    const authorization = authorizeStagedChange(f.store, { stagedChangeId: f.staged.data.stage.id })
+    if (!authorization.ok) throw new Error('authorization should succeed')
+    const replacement = await f.handlers.stage_policy_change({ simulationId: 'sim-cfg1-production-restart-7d', expectedConfigRevision: 1 })
+    if (!replacement.ok) throw new Error('replacement should succeed')
+
+    expect(await f.handlers.apply_staged_change({ stageId: replacement.data.stage.id, expectedConfigRevision: 1 })).toMatchObject({ ok: false, error: { code: 'AUTHORIZATION_REQUIRED' } })
   })
 
   it('validates and rolls back only the last applied change while retaining audit history', async () => {

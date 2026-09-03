@@ -27,13 +27,20 @@ function installModelContext(modelContext?: WebMCP.ModelContext) {
   Object.defineProperty(document, 'modelContext', { configurable: true, value: modelContext })
 }
 
+function installNavigatorModelContext(modelContext?: WebMCP.ModelContext) {
+  Object.defineProperty(navigator, 'modelContext', { configurable: true, value: modelContext })
+}
+
 async function flushRegistration() {
   await Promise.resolve()
   await Promise.resolve()
   await Promise.resolve()
 }
 
-afterEach(() => installModelContext(undefined))
+afterEach(() => {
+  installModelContext(undefined)
+  installNavigatorModelContext(undefined)
+})
 
 describe('imperative WebMCP registration', () => {
   it('registers the nine base tools with awaited descriptors, schemas, and correct read-only annotations', async () => {
@@ -52,8 +59,12 @@ describe('imperative WebMCP registration', () => {
     for (const { descriptor } of fake.active.values()) {
       expect(descriptor).toEqual(expect.objectContaining({ title: expect.any(String), description: expect.any(String), inputSchema: expect.any(Object), execute: expect.any(Function) }))
       expect(descriptor.annotations?.readOnlyHint).toBe(!['stage_policy_change', 'rollback_last_change'].includes(descriptor.name))
+      if (descriptor.annotations?.readOnlyHint) {
+        expect(descriptor.description).toContain('no persistent side effects')
+        expect(descriptor.description).toContain('transient visible dashboard')
+      }
     }
-    expect(agentContext.getSnapshot()).toMatchObject({ toolStatus: 'available', registeredCount: 9 })
+    expect(agentContext.getSnapshot()).toMatchObject({ toolStatus: 'available', registeredCount: 9, applyRegistered: false })
     dispose()
     expect(fake.active.size).toBe(0)
   })
@@ -72,7 +83,7 @@ describe('imperative WebMCP registration', () => {
     await flushRegistration()
 
     expect(fake.active.size).toBe(10)
-    expect(agentContext.getSnapshot().registeredCount).toBe(10)
+    expect(agentContext.getSnapshot()).toMatchObject({ registeredCount: 10, applyRegistered: true })
     const apply = fake.active.get('apply_staged_change')!.descriptor
     expect(apply.annotations?.readOnlyHint).toBe(false)
     const result = await apply.execute({ stageId: staged.data.id, expectedConfigRevision: 1 }, { signal: new AbortController().signal }) as { ok: boolean }
@@ -82,7 +93,7 @@ describe('imperative WebMCP registration', () => {
     expect(later).toHaveLength(1)
     later[0]()
     expect(fake.active.size).toBe(9)
-    expect(agentContext.getSnapshot().registeredCount).toBe(9)
+    expect(agentContext.getSnapshot()).toMatchObject({ registeredCount: 9, applyRegistered: false })
     dispose()
   })
 
@@ -178,6 +189,65 @@ describe('imperative WebMCP registration', () => {
     const dispose = await registerStagedOpsTools({ store: createStagedOpsStore({ storage: new MemoryStorage() }), agentContext: errored })
     expect(fake.calls).toHaveLength(9)
     expect(errored.getSnapshot()).toMatchObject({ toolStatus: 'error', registeredCount: 8 })
+    dispose()
+  })
+
+  it('tracks apply registration independently when one base registration failed', async () => {
+    const fake = fakeModelContext('inspect_device')
+    installModelContext(fake.modelContext)
+    const agentContext = createAgentContextStore()
+    const store = createStagedOpsStore({ storage: new MemoryStorage() })
+    const dispose = await registerStagedOpsTools({ store, agentContext })
+    const staged = stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7 })
+    if (!staged.ok) throw new Error('stage should succeed')
+    authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+    await flushRegistration()
+
+    expect(agentContext.getSnapshot()).toMatchObject({ toolStatus: 'error', registeredCount: 9, applyRegistered: true })
+    const getStage = fake.active.get('get_staged_change')!.descriptor
+    const result = await getStage.execute({}, { signal: new AbortController().signal }) as { data: { applyRegistered: boolean } }
+    expect(result.data.applyRegistered).toBe(true)
+    dispose()
+  })
+
+  it('ignores an intentional apply registration abort while registerTool is unsettled', async () => {
+    const active = new Map<string, Registered>()
+    const modelContext = {
+      registerTool: vi.fn((descriptor: WebMCP.ModelContextTool, options?: WebMCP.ModelContextRegisterToolOptions) => {
+        if (descriptor.name !== 'apply_staged_change') {
+          active.set(descriptor.name, { descriptor, signal: options?.signal })
+          options?.signal?.addEventListener('abort', () => active.delete(descriptor.name), { once: true })
+          return Promise.resolve()
+        }
+        return new Promise<void>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
+        })
+      }),
+    } as unknown as WebMCP.ModelContext
+    installModelContext(modelContext)
+    const store = createStagedOpsStore({ storage: new MemoryStorage() })
+    const agentContext = createAgentContextStore()
+    const dispose = await registerStagedOpsTools({ store, agentContext })
+    const staged = stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7 })
+    if (!staged.ok) throw new Error('stage should succeed')
+    authorizeStagedChange(store, { stagedChangeId: staged.data.id })
+    await flushRegistration()
+
+    stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7 })
+    await flushRegistration()
+
+    expect(agentContext.getSnapshot()).toMatchObject({ toolStatus: 'available', registeredCount: 9, applyRegistered: false })
+    dispose()
+  })
+
+  it('falls back to navigator when document.modelContext has no registerTool method', async () => {
+    const fake = fakeModelContext()
+    installModelContext({} as WebMCP.ModelContext)
+    installNavigatorModelContext(fake.modelContext)
+
+    const dispose = await registerStagedOpsTools({ store: createStagedOpsStore({ storage: new MemoryStorage() }), agentContext: createAgentContextStore() })
+
+    expect(fake.active.size).toBe(9)
     dispose()
   })
 })

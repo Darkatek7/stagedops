@@ -96,11 +96,11 @@ export function createToolHandlers(options: HandlerOptions): ToolHandlers {
     return result
   }
   const run = async <T>(tool: ToolName, input: unknown, invocation: InvocationOptions | undefined, execute: (value: T) => ToolResult<unknown>): Promise<ToolResult<unknown>> => {
+    if (invocation?.signal?.aborted) return publish(aborted(tool))
     const validate = validators[tool]
     if (!validate(input)) {
       return publish(failure(tool, 'INVALID_INPUT', 'The tool input does not match the required schema.', complete('Correct the listed input fields and retry.'), (validate.errors ?? []).map((error) => ({ field: issuePath(error), message: error.message ?? 'is invalid' }))))
     }
-    if (invocation?.signal?.aborted) return publish(aborted(tool))
     try { return execute(input as T) } catch {
       return publish(failure(tool, 'INTERNAL_ERROR', 'The tool could not complete because of an unexpected internal error.', complete('Use the manual dashboard or retry the call.'), [], true))
     }
@@ -209,6 +209,9 @@ export function createToolHandlers(options: HandlerOptions): ToolHandlers {
   handlers.stage_policy_change = (input, invocation) => run('stage_policy_change', input, invocation, (value: { simulationId: string; expectedConfigRevision: number }) => {
     const currentRevision = store.getSnapshot().configRevision
     if (value.expectedConfigRevision !== currentRevision) return publish(stale('stage_policy_change'))
+    if (getPolicies(store).find((policy) => policy.id === 'pol-rapid-update-enforcement')?.updates.restartDeadlineDays === 7) {
+      return publish(failure('stage_policy_change', 'NO_EFFECT', 'The rapid-update restart deadline is already 7 days.', complete('No policy change is available to stage.')))
+    }
     if (value.simulationId !== `sim-cfg${currentRevision}-production-restart-7d`) return publish(failure('stage_policy_change', 'STALE_SIMULATION', 'The simulation does not match the current configuration revision.', callTool('simulate_policy_change', 'Run a fresh simulation for the current revision.')))
     if (invocation?.signal?.aborted) return publish(aborted('stage_policy_change'))
     const result = stagePolicyChange(store, { policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, actor: 'Agent' })
@@ -220,7 +223,7 @@ export function createToolHandlers(options: HandlerOptions): ToolHandlers {
   handlers.get_staged_change = (input, invocation) => run('get_staged_change', input, invocation, () => {
     const snapshot = store.getSnapshot()
     const authorizationValid = snapshot.authorization?.valid ?? false
-    const data = { activeStage: snapshot.stagedChange, authorization: snapshot.authorization, authorizationValid, applyRegistered: authorizationValid && context.getSnapshot().registeredCount === 10 }
+    const data = { activeStage: snapshot.stagedChange, authorization: snapshot.authorization, authorizationValid, applyRegistered: context.getSnapshot().applyRegistered }
     return publish(success('get_staged_change', snapshot.stagedChange ? `Stage ${snapshot.stagedChange.id} is awaiting completion.` : 'There is no active staged change.', data, snapshot.stagedChange ? (authorizationValid ? callTool('apply_staged_change', 'Apply the authorized staged change.') : humanAction('Review and authorize the staged plan in the dashboard.')) : callTool('simulate_policy_change', 'Simulate a policy change before staging.')))
   })
 

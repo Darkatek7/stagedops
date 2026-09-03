@@ -9,16 +9,16 @@ const baseToolNames: readonly ToolName[] = [
 ]
 
 const descriptions: Record<ToolName, { title: string; description: string; readOnly: boolean }> = {
-  get_fleet_summary: { title: 'Get fleet summary', description: 'Reads fleet compliance, issue counts, stage, authorization, and rollback availability. It has no side effects.', readOnly: true },
-  find_devices: { title: 'Find devices', description: 'Reads and filters deterministic fleet devices. It has no persistent side effects and updates transient dashboard filters.', readOnly: true },
-  inspect_device: { title: 'Inspect device', description: 'Reads one device and its policy evidence. It has no persistent side effects and opens transient device detail.', readOnly: true },
-  explain_policy_conflicts: { title: 'Explain policy conflicts', description: 'Reads root-cause evidence for active policy conflicts. It has no persistent side effects and opens transient conflict detail.', readOnly: true },
-  simulate_policy_change: { title: 'Simulate policy change', description: 'Calculates the approved policy impact without changing persistent state; it updates only transient simulation context.', readOnly: true },
+  get_fleet_summary: { title: 'Get fleet summary', description: 'Reads fleet compliance, issue counts, stage, authorization, and rollback availability. It has no persistent side effects and updates transient visible dashboard result context.', readOnly: true },
+  find_devices: { title: 'Find devices', description: 'Reads and filters deterministic fleet devices. It has no persistent side effects and updates transient visible dashboard filters.', readOnly: true },
+  inspect_device: { title: 'Inspect device', description: 'Reads one device and its policy evidence. It has no persistent side effects and updates transient visible dashboard device detail.', readOnly: true },
+  explain_policy_conflicts: { title: 'Explain policy conflicts', description: 'Reads root-cause evidence for active policy conflicts. It has no persistent side effects and updates transient visible dashboard conflict detail.', readOnly: true },
+  simulate_policy_change: { title: 'Simulate policy change', description: 'Calculates the approved policy impact. It has no persistent side effects and updates transient visible dashboard simulation context.', readOnly: true },
   stage_policy_change: { title: 'Stage policy change', description: 'Stages the approved policy plan and appends an audit event. It changes persistent state but does not authorize or apply the policy.', readOnly: false },
-  get_staged_change: { title: 'Get staged change', description: 'Reads the active stage and runtime authorization status. It has no side effects.', readOnly: true },
+  get_staged_change: { title: 'Get staged change', description: 'Reads the active stage and runtime authorization status. It has no persistent side effects and updates transient visible dashboard result context.', readOnly: true },
   apply_staged_change: { title: 'Apply staged change', description: 'Applies one human-authorized staged policy change atomically, changes persistent policy state, and creates a rollback point.', readOnly: false },
   rollback_last_change: { title: 'Rollback last change', description: 'Restores the exact policy state before the last apply and appends an immutable audit event. It changes persistent state.', readOnly: false },
-  get_audit_log: { title: 'Get audit log', description: 'Reads immutable audit events newest first. It has no side effects.', readOnly: true },
+  get_audit_log: { title: 'Get audit log', description: 'Reads immutable audit events newest first. It has no persistent side effects and updates transient visible dashboard result context.', readOnly: true },
 }
 
 interface TransitionNavigator extends Navigator { readonly modelContext?: WebMCP.ModelContext }
@@ -60,7 +60,8 @@ export async function registerStagedOpsTools(options: RegistrationOptions): Prom
   disposeActiveRegistration?.()
   const context = options.agentContext ?? defaultAgentContextStore
   const scheduleTask = options.scheduleTask ?? ((task: () => void) => { setTimeout(task, 0) })
-  const modelContext = document.modelContext ?? (navigator as TransitionNavigator).modelContext
+  const documentContext = document.modelContext?.registerTool ? document.modelContext : undefined
+  const modelContext = documentContext ?? (navigator as TransitionNavigator).modelContext
   if (!modelContext?.registerTool) {
     context.setRegistration('unavailable', 0)
     return () => undefined
@@ -94,6 +95,7 @@ export async function registerStagedOpsTools(options: RegistrationOptions): Prom
     applyController = null
     if (applyRegistered) registeredCount -= 1
     applyRegistered = false
+    context.setApplyRegistered(false)
     context.setRegistration(registrationFailed ? 'error' : 'available', registeredCount)
   }
 
@@ -119,9 +121,11 @@ export async function registerStagedOpsTools(options: RegistrationOptions): Prom
       if (controller.signal.aborted || disposed) return
       applyRegistered = true
       registeredCount += 1
+      context.setApplyRegistered(true)
       context.setRegistration(registrationFailed ? 'error' : 'available', registeredCount)
     } catch {
       if (applyController === controller) applyController = null
+      if (controller.signal.aborted || disposed) return
       registrationFailed = true
       context.setRegistration('error', registeredCount)
     }
