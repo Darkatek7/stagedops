@@ -12,6 +12,12 @@ Using the emerging [WebMCP browser standard](https://webmachinelearning.github.i
 
 ---
 
+<p align="center">
+  <img src="docs/screenshots/baseline.png" alt="StagedOps Operations Overview Dashboard" width="100%" />
+</p>
+
+---
+
 ## Quick Reference: WebMCP Implementation
 
 The imperative WebMCP tool registration logic is located in:
@@ -38,16 +44,46 @@ Shared tool execution handlers and structured envelope responses:
   - Devices `dev-035` and `dev-036` (Operations, Production) remain noncompliant because OS version `11.2.0` is below the required minimum `12.0.0`.
   - Remediated result: **58/60 compliant devices (96.7%)**, 0 policy collisions, 2 named OS blockers.
 
+<p align="center">
+  <img src="docs/screenshots/simulation.png" alt="Simulation Preview" width="49%" />
+  <img src="docs/screenshots/applied.png" alt="Applied Fleet Compliance at 96.7%" width="49%" />
+</p>
+
 ### 2. The Human Authorization Gate
 - **Staging Never Mutates**: The `stage_policy_change` tool creates a visual change plan in the visible dashboard, but does not alter policy configuration or grant apply privileges.
 - **Dynamic Tool Registration**: In the baseline state, exactly **9 tools** are registered. The 10th tool, `apply_staged_change`, is registered **only after a human administrator clicks "Authorize agent"** in the Change Plan drawer.
 - **Ephemeral & Single-Use**: Human authorization lasts at most 5 minutes, is bound strictly to the active stage ID and configuration revision, and is immediately invalidated by apply execution, stage replacement, manual revocation, browser refresh, or demo reset.
 - **Atomic Apply & Rollback**: Apply writes next state atomically to Local Storage before publishing to the UI. Rollback restores the exact pre-apply snapshot while retaining an append-only audit trail.
 
+<p align="center">
+  <img src="docs/screenshots/staged.png" alt="Staged Change Plan Drawer with Blast Radius" width="49%" />
+  <img src="docs/screenshots/human-authorized.png" alt="Human Authorization Checkpoint" width="49%" />
+</p>
+
 ### 3. Progressive Enhancement & Accessibility
 - **Full Manual Workflow**: The application is 100% operational through standard keyboard and mouse interaction when WebMCP is unsupported or inactive.
 - **Enterprise Design System**: Permanent light command-center aesthetic, cobalt primary accents, teal data cues, high-contrast typography, semantic landmarks, real table headers with `aria-sort`, focus trapping and restoration, and 44px minimum touch targets.
 - **WCAG 2.2 AA Compliant**: Automated accessibility scans via `@axe-core/playwright` verify 0 critical or serious violations across desktop, tablet, and mobile viewports.
+
+---
+
+## Visual Walkthrough & Gallery
+
+| Operations Overview (Baseline 80.0%) | Simulation Workbench (10 Resolved, 2 Blockers) |
+|:---:|:---:|
+| ![Overview](docs/gallery/01-overview-baseline.png) | ![Simulation](docs/gallery/06-simulation-results.png) |
+
+| Change Plan Drawer (12-Device Blast Radius) | Human Authorization Checkpoint (10 Tools Active) |
+|:---:|:---:|
+| ![Staged Plan](docs/gallery/07-staged-change-plan.png) | ![Human Gate](docs/gallery/08-human-authorization.png) |
+
+| Remediated Fleet Compliance (96.7%) | Immutable Append-Only Audit Trail |
+|:---:|:---:|
+| ![Applied](docs/gallery/09-applied-fleet-compliance.png) | ![Audit Trail](docs/gallery/13-immutable-audit-trail.png) |
+
+| Device Inventory & Inspection (`dev-035`) | Rollback Confirmation Guarantee |
+|:---:|:---:|
+| ![Device Inspection](docs/gallery/04-device-inspection-dev035.png) | ![Rollback](docs/gallery/11-rollback-confirmation.png) |
 
 ---
 
