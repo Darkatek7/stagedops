@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
+    "ajv": "^8.20.0",
     "react": "latest",
     "react-dom": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "webmcp-types": "^0.1.5"
   },
   "devDependencies": {
     "@eslint/js": "latest",

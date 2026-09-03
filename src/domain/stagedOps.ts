@@ -121,6 +121,12 @@ export interface Simulation {
   readonly osBlockers: readonly Device[]
 }
 
+export interface FleetEvaluation {
+  readonly conflictDeviceIds: readonly string[]
+  readonly compliantDeviceIds: readonly string[]
+  readonly osBlockers: readonly Device[]
+}
+
 const departments: readonly Department[] = ['Engineering', 'Finance', 'Operations', 'Sales', 'Support']
 const conflictDeviceIds = ['dev-021', 'dev-022', 'dev-023', 'dev-024', 'dev-033', 'dev-034', 'dev-035', 'dev-036', 'dev-045', 'dev-046', 'dev-047', 'dev-048']
 
@@ -242,7 +248,7 @@ function validState(value: unknown): value is PersistentState {
     previousAt = event.at
 
     if (event.action === 'stage') {
-      if (event.actor !== 'Human' || event.detail !== 'Staged pol-rapid-update-enforcement' || !hasExactPolicies(expectedPolicies, baselinePolicies)) return false
+      if ((event.actor !== 'Human' && event.actor !== 'Agent') || event.detail !== 'Staged pol-rapid-update-enforcement' || !hasExactPolicies(expectedPolicies, baselinePolicies)) return false
       expectedStage = { id: `change-${String(sequence).padStart(6, '0')}`, policyId: 'pol-rapid-update-enforcement', restartDeadlineDays: 7, baseConfigRevision: configRevision, createdAt: event.at }
       authorizedStageId = null
     } else if (event.action === 'authorize') {
@@ -377,6 +383,11 @@ export function getDevices(): readonly Device[] { return seedDevices }
 export function getPolicies(store: StagedOpsStore): readonly Policy[] { return internal(store).__internal.getState().policies }
 export function getStagedChange(store: StagedOpsStore): StagedChange | null { return internal(store).__internal.getState().stagedChange }
 export function getAuditLog(store: StagedOpsStore): readonly AuditEvent[] { return internal(store).__internal.getState().audit }
+export function getFleetEvaluation(store: StagedOpsStore): FleetEvaluation {
+  const result = evaluate(internal(store).__internal.getState().policies)
+  return freeze({ conflictDeviceIds: result.conflicts, compliantDeviceIds: result.compliant, osBlockers: result.osBlockers })
+}
+export function getRollbackChangeId(store: StagedOpsStore): string | null { return internal(store).__internal.getState().rollbackPoint?.appliedChangeId ?? null }
 
 function changedPolicies(state: Pick<PersistentState, 'policies'>, policyId: string, restartDeadlineDays: number): readonly Policy[] {
   return freeze(state.policies.map((policy) => policy.id === policyId ? freeze({ ...policy, updates: freeze({ restartDeadlineDays }) }) : policy))
@@ -409,14 +420,14 @@ export function simulatePolicyChange(store: StagedOpsStore, input: { policyId: s
   return result
 }
 
-export function stagePolicyChange(store: StagedOpsStore, input: { policyId: string; restartDeadlineDays: number }): CommandResult<StagedChange> {
+export function stagePolicyChange(store: StagedOpsStore, input: { policyId: string; restartDeadlineDays: number; actor?: Actor }): CommandResult<StagedChange> {
   const engine = internal(store).__internal
   const current = engine.getState()
   const validation = validateChange(current, input)
   if (!validation.ok) return validation
   const id = `change-${String(current.sequence + 1).padStart(6, '0')}`
-  const staged = freeze({ id, ...input, baseConfigRevision: current.configRevision, createdAt: engine.now() })
-  const result = engine.transition({ action: 'stage', actor: 'Human', detail: `Staged ${input.policyId}` }, (previous) => ({ ...previous, stagedChange: staged, rollbackPoint: previous.rollbackPoint }))
+  const staged = freeze({ id, policyId: input.policyId, restartDeadlineDays: input.restartDeadlineDays, baseConfigRevision: current.configRevision, createdAt: engine.now() })
+  const result = engine.transition({ action: 'stage', actor: input.actor ?? 'Human', detail: `Staged ${input.policyId}` }, (previous) => ({ ...previous, stagedChange: staged, rollbackPoint: previous.rollbackPoint }))
   if (!result.ok) return result
   engine.invalidateAuthorization()
   return { ok: true, data: staged }
@@ -432,6 +443,11 @@ export function authorizeStagedChange(store: StagedOpsStore, input: { stagedChan
   if (!result.ok) return result
   engine.setAuthorization(authorization)
   return { ok: true, data: { id: authorization.id, stagedChangeId: authorization.stagedChangeId, expiresAt: authorization.expiresAt, valid: true } }
+}
+
+/** Revokes session-only authorization without changing the persistent audit/state model. */
+export function revokeStagedAuthorization(store: StagedOpsStore): void {
+  internal(store).__internal.setAuthorization(null)
 }
 
 export function applyStagedChange(store: StagedOpsStore, input: { actor: Actor; authorizationId?: string }): CommandResult<{ readonly compliancePercent: number }> {
