@@ -2,6 +2,12 @@ import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
+interface WindowWithStagedOps extends Window {
+  stagedOps?: {
+    callTool: (name: string, input?: Record<string, unknown>) => Promise<unknown>
+  }
+}
+
 test.describe('StagedOps Video Demo Recording', () => {
   test('records full high-definition video walkthrough of StagedOps', async ({ page }) => {
     // Generous timeout for video recording walkthrough
@@ -28,7 +34,7 @@ test.describe('StagedOps Video Demo Recording', () => {
     // --- SCENE 2: Agent Exploration & Fleet Inspection (0:25 - 0:55) ---
     // Agent executes get_fleet_summary
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('get_fleet_summary')
       }
@@ -43,7 +49,7 @@ test.describe('StagedOps Video Demo Recording', () => {
 
     // Agent executes find_devices for Production conflicts
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('find_devices', { ring: 'Production', status: 'POLICY_CONFLICT' })
       }
@@ -54,7 +60,7 @@ test.describe('StagedOps Video Demo Recording', () => {
     await page.getByRole('searchbox', { name: 'Search devices' }).fill('dev-035')
     await page.waitForTimeout(2500)
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('inspect_device', { deviceId: 'dev-035' })
       }
@@ -92,7 +98,7 @@ test.describe('StagedOps Video Demo Recording', () => {
     // --- SCENE 5: Agent Execution & Blocker Verification (1:55 - 2:25) ---
     // Agent executes apply_staged_change
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('apply_staged_change', { stageId: 'change-000001', expectedConfigRevision: 1 })
       }

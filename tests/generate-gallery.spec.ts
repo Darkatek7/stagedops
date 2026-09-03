@@ -2,6 +2,12 @@ import { test, expect } from '@playwright/test'
 import fs from 'node:fs'
 import path from 'node:path'
 
+interface WindowWithStagedOps extends Window {
+  stagedOps?: {
+    callTool: (name: string, input?: Record<string, unknown>) => Promise<unknown>
+  }
+}
+
 test.describe('StagedOps Devpost 3:2 Gallery Generation', () => {
   test('captures 15 high-definition 3:2 ratio gallery images for Devpost', async ({ page }) => {
     test.setTimeout(180_000)
@@ -24,7 +30,7 @@ test.describe('StagedOps Devpost 3:2 Gallery Generation', () => {
 
     // 2. Agent Fleet Summary
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('get_fleet_summary')
       }
@@ -37,7 +43,7 @@ test.describe('StagedOps Devpost 3:2 Gallery Generation', () => {
     await page.getByRole('button', { name: 'Devices' }).click()
     await expect(page.getByRole('heading', { level: 1, name: 'Managed devices' })).toBeVisible()
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('find_devices', { ring: 'Production', status: 'POLICY_CONFLICT' })
       }
@@ -48,7 +54,7 @@ test.describe('StagedOps Devpost 3:2 Gallery Generation', () => {
     // 4. Device Inspection dev-035
     await page.getByRole('searchbox', { name: 'Search devices' }).fill('dev-035')
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('inspect_device', { deviceId: 'dev-035' })
       }
@@ -83,7 +89,7 @@ test.describe('StagedOps Devpost 3:2 Gallery Generation', () => {
 
     // 9. Applied Fleet Compliance
     await page.evaluate(async () => {
-      const win = window as any
+      const win = window as unknown as WindowWithStagedOps
       if (win.stagedOps?.callTool) {
         await win.stagedOps.callTool('apply_staged_change', { stageId: 'change-000001', expectedConfigRevision: 1 })
       }
